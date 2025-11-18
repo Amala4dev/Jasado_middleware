@@ -1,0 +1,94 @@
+from django.conf import settings
+
+
+field_map_wawibox_file_upload = {
+    "fields": [
+        ("manufacturer_article_no", "50c"),
+        ("manufacturer_name", "255t"),
+        ("private_label", "1c_bool"),
+        ("internal_number", "100c"),
+        ("name", "255t"),
+        ("description", "50000t"),
+        ("vat_category", "1d"),
+        ("max_order_quantity", "10d"),
+        ("image1_url", "255t"),
+        ("image2_url", "255t"),
+        ("image3_url", "255t"),
+        ("returnable", "1c_bool"),
+        ("is_available", "1c_bool"),
+        ("delivery_time", "10d"),
+        ("order_number", "100c"),
+        ("valid_from", "10d_date"),
+        ("valid_until", "10d_date"),
+        ("min_order_quantity", "10d"),
+        ("price", "14d,"),
+        ("discountable", "1c_bool"),
+        ("order_number_2", "100c"),
+        ("min_order_quantity_2", "10d"),
+        ("price_2", "14d,"),
+        ("discountable_2", "1c_bool"),
+    ],
+    "model_label": "wawibox.WawiboxProductUpdate",
+}
+
+
+field_map_wawibox_master_data = {
+    "fields": [
+        "sku",
+        "name",
+        "manufacturer_name",
+        "manufacturer_part_number",
+        "price",
+        "delivery_time",
+        "min_order_qty",
+        "min_order_qty_2",
+        "price_2",
+        "min_order_qty_3",
+        "price_3",
+        "min_order_qty_4",
+        "price_4",
+        "min_order_qty_5",
+        "price_5",
+    ],
+    "boolean_fields": [],
+    "date_fields": [],
+    "code_fields": [],
+    "model_label": "wawibox.WawiboxProduct",
+    "unique_field": "sku",
+}
+
+
+field_map_wawibox_competitor_prices = {
+    "fields": [
+        "sku",
+        "product_name",
+        "net_top_1",
+        "vendor_id_1",
+        "vendor_name_1",
+        "net_top_2",
+        "vendor_id_2",
+        "vendor_name_2",
+        "net_top_3",
+        "vendor_id_3",
+        "vendor_name_3",
+        "net_top_4",
+        "vendor_id_4",
+        "vendor_name_4",
+        "net_top_5",
+        "vendor_id_5",
+        "vendor_name_5",
+        "net_top_6",
+        "vendor_id_6",
+        "vendor_name_6",
+    ],
+    "boolean_fields": [],
+    "date_fields": [],
+    "code_fields": [],
+    "model_label": "wawibox.WawiboxCompetitorPrice",
+    "unique_field": "sku",
+}
+
+WAWIBOX_DATA_FIELD_MAPS = {
+    settings.WAWIBOX_FILE_MARKETPLACE_PREFIX: field_map_wawibox_master_data,
+    settings.WAWIBOX_FILE_PRICE_COMPARISON_SUFFIX: field_map_wawibox_competitor_prices,
+}

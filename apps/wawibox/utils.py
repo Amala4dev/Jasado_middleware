@@ -1,0 +1,110 @@
+from apps.core.models import LogEntry
+from apps.core.models import LogEntry
+import os
+import re
+from apps.wawibox.mapping import field_map_wawibox_file_upload
+from django.conf import settings
+from .models import WawiboxProductUpdate
+import re
+import datetime
+
+WAWIBOX_UPLOAD_PATH = settings.WAWIBOX_UPLOAD_PATH
+
+
+class WawiBoxLog:
+    @staticmethod
+    def info(msg):
+        LogEntry.objects.create(
+            source=LogEntry.WAWIBOX, level=LogEntry.INFO, message=msg
+        )
+
+    @staticmethod
+    def warning(msg):
+        LogEntry.objects.create(
+            source=LogEntry.WAWIBOX, level=LogEntry.WARNING, message=msg
+        )
+
+    @staticmethod
+    def error(msg):
+        LogEntry.objects.create(
+            source=LogEntry.WAWIBOX, level=LogEntry.ERROR, message=msg
+        )
+
+
+def export_wawibox_product_data_to_csv(delimiter=";"):
+    product_list = []
+
+    product_data_fields = field_map_wawibox_file_upload["fields"]
+    for product_data in WawiboxProductUpdate.objects.iterator():
+        product_instance_values = [
+            _format_wawibox_value(getattr(product_data, field_name), field_type)
+            for field_name, field_type in product_data_fields
+        ]
+        product_list.append(delimiter.join(map(str, product_instance_values)))
+
+    os.makedirs(WAWIBOX_UPLOAD_PATH, exist_ok=True)
+
+    csv_name = "wawibox_product_data.csv"
+    csv_path = os.path.join(WAWIBOX_UPLOAD_PATH, csv_name)
+
+    final_product_data = "\r\n".join(product_list)
+
+    with open(csv_path, "w", encoding="cp850") as f:
+        f.write(final_product_data)
+
+    return {
+        "csv_path": csv_path,
+        "csv_name": csv_name,
+    }
+
+
+def _format_wawibox_value(value, field_type):
+    if value in (None, ""):
+        return ""
+
+    match = re.match(r"(\d+)?([a-zA-Z,/_]+)", field_type)
+    length = int(match.group(1)) if match.group(1) else None
+    ftype = match.group(2)
+
+    if ftype.endswith("c"):
+        value = str(value).strip().upper()
+    elif ftype.endswith("t"):
+        value = str(value).strip()
+    elif ftype == "d":
+        value = str(int(float(value))).replace(".", "").replace(",", "")
+    elif ftype == "d,":
+        value = str(value).replace(",", "").replace(".", ",")
+    elif ftype.startswith("TT"):
+        value = value.strftime("%d.%m.%y") if value else ""
+    elif ftype in ("J/N", "c_bool"):
+        value = "J" if value else "N"
+    else:
+        value = str(value)
+
+    if length and not ftype.startswith("TT"):
+        value = value[:length]
+
+    return value
+
+
+def extract_date_from_wawibox_filename(filename):
+    """
+    Extract date from:
+    - DD.MM.YYYY (e.g. 30.07.2025)
+    - jasado-DD.MM.YYYY-price_comparison.csv
+    - marketplaceDDMMYYYY.csv
+    """
+
+    # 1. Try DD.MM.YYYY (jasado or standalone)
+    match = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", filename)
+    if match:
+        dd, mm, yyyy = match.groups()
+        return datetime.date(int(yyyy), int(mm), int(dd))
+
+    # 2. Try marketplaceDDMMYYYY.csv
+    match = re.search(r"marketplace(\d{2})(\d{2})(\d{4})", filename)
+    if match:
+        dd, mm, yyyy = match.groups()
+        return datetime.date(int(yyyy), int(mm), int(dd))
+
+    return None

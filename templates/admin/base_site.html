@@ -1,0 +1,20 @@
+{% extends 'admin/base.html'%}
+{% load static %}
+
+{% block extrahead %}
+    <!-- Favicons -->
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'img/apple-touch-icon.png' %}?v=1.0">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'img/favicon-32x32.png' %}?v=1.0">
+    <link rel="icon" type="image/png" sizes="16x16" href="{% static 'img/favicon-16x16.png' %}?v=1.0">
+    <link rel="manifest" href="{% static 'img/site.webmanifest' %}?v=1.0">
+{% endblock %}
+
+{% block branding %}
+    <h1 id="header">
+        Jasado Middleware
+    </h1>
+{% endblock %}
+
+{% block extrastyle %}
+<link rel="stylesheet" href="{% static 'css/admin.css' %}?v=28">
+{% endblock %}

@@ -1,0 +1,56 @@
+:root {
+    --selected-row: #e5e7eb;
+    --header-color: #fff;
+    --breadcrumbs-fg: #ec070f;
+}
+
+#header {
+    height: 50px;
+    background: #3446c7;
+    color: #fff;
+}
+
+#branding h1 {
+    color: #fff;
+}
+
+a:link,
+a:visited {
+    color: #2643a2;
+}
+
+div.breadcrumbs {
+    background: #dbe2fa;
+    color: #2643a2;
+}
+
+div.breadcrumbs a {
+    color: #1d2b57;
+}
+
+
+
+.module h2,
+.module caption,
+.inline-group h2 {
+    background: #9599bb;
+    color: #1a1f36;       
+    font-weight: 600;
+}
+
+.button, 
+input[type=submit], 
+input[type=button], 
+.submit-row input, 
+a.button {
+    background: #3446c7;
+    color: #fff;
+}
+
+.object-tools a.historylink {
+    display: none !important;
+}
+
+fieldset .fieldset-heading, fieldset .inline-heading, :not(.inline-related) .collapse summary {
+    background: #9599bb !important;
+}

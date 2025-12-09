@@ -1,28 +1,9 @@
 from django.contrib import admin
 from .models import (
-    AeraSession,
     AeraProduct,
     AeraCompetitorPrice,
-    AeraOrder,
-    AeraProductUpdate,
+    AeraExport,
 )
-
-
-# @admin.register(AeraSession)
-# class AeraSessionAdmin(admin.ModelAdmin):
-
-#     list_display = ("session_id", "created_at", "updated_at")
-#     list_display_links = ("session_id", "created_at", "updated_at")
-#     search_fields = ("session_id",)
-
-#     def has_add_permission(self, request, obj=None):
-#         return False
-
-#     def has_change_permission(self, request, obj=None):
-#         return False
-
-#     def has_delete_permission(self, request, obj=None):
-#         return False
 
 
 @admin.register(AeraProduct)
@@ -50,6 +31,7 @@ class AeraProductAdmin(admin.ModelAdmin):
             "Basic Info",
             {
                 "fields": (
+                    "product",
                     "sku",
                     "aera_product_id",
                     "manufacturer",
@@ -126,35 +108,6 @@ class AeraProductAdmin(admin.ModelAdmin):
         return False
 
 
-# @admin.register(AeraOrder)
-# class AeraOrderAdmin(admin.ModelAdmin):
-
-#     list_display = ("order_number", "buyer_name", "fetched_at", "synced_to_weclapp")
-#     list_display_links = (
-#         "order_number",
-#         "buyer_name",
-#         "fetched_at",
-#         "synced_to_weclapp",
-#     )
-#     list_filter = ("synced_to_weclapp",)
-#     search_fields = (
-#         "order_token",
-#         "order_number",
-#         "buyer_name",
-#         "seller_name",
-#     )
-#     list_per_page = 50
-
-#     def has_add_permission(self, request, obj=None):
-#         return False
-
-#     def has_change_permission(self, request, obj=None):
-#         return False
-
-#     def has_delete_permission(self, request, obj=None):
-#         return False
-
-
 @admin.register(AeraCompetitorPrice)
 class AeraCompetitorPriceAdmin(admin.ModelAdmin):
     list_display = (
@@ -177,27 +130,25 @@ class AeraCompetitorPriceAdmin(admin.ModelAdmin):
         return False
 
 
-# @admin.register(AeraProductUpdate)
-# class AeraProductUpdateAdmin(admin.ModelAdmin):
-#     list_display = (
-#         "sku",
-#         "product_name",
-#         "manufacturer",
-#         "mpn",
-#         "different_delivery_time",
-#         "shipped_temperature_stable",
-#         "calculated_sales_price",
-#         "created_at",
-#     )
-#     list_display_links = ("sku", "product_name", "manufacturer")
-#     search_fields = ("sku", "product_name", "manufacturer", "mpn", "gtin")
-#     list_per_page = 50
+@admin.register(AeraExport)
+class AeraExportAdmin(admin.ModelAdmin):
+    list_display = (
+        "product_name",
+        "sku",
+        "different_delivery_time",
+        "sales_price",
+        "updated_at",
+        "last_pushed_to_aera",
+    )
+    list_display_links = ("sku", "product_name")
+    search_fields = ("sku", "product_name", "manufacturer", "mpn", "gtin")
+    list_per_page = 50
 
-#     def has_add_permission(self, request, obj=None):
-#         return False
+    def has_add_permission(self, request, obj=None):
+        return False
 
-#     def has_change_permission(self, request, obj=None):
-#         return False
+    def has_change_permission(self, request, obj=None):
+        return False
 
-#     def has_delete_permission(self, request, obj=None):
-#         return False
+    def has_delete_permission(self, request, obj=None):
+        return False

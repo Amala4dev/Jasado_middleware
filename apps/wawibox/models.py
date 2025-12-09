@@ -10,8 +10,6 @@ from django.db.models import DateTimeField
 from django.db.models import DecimalField
 from django.db.models import SET_NULL
 from django.db.models import CASCADE
-from utils import CleanDecimalField
-from django.core.validators import MaxValueValidator
 from apps.core.models import Product
 
 OFFER_TYPE_ID_MAP = {
@@ -86,6 +84,8 @@ class WawiboxCompetitorPrice(Model):
     Holds product competitor prices fetched from Wawibox
     """
 
+    JASADO_VENDOR_ID = "468312"
+
     product = ForeignKey(
         Product,
         on_delete=SET_NULL,
@@ -144,49 +144,59 @@ class WawiboxCompetitorPrice(Model):
         return self.sku
 
 
-class WawiboxProductUpdate(Model):
-    manufacturer_article_no = CharField(max_length=50, db_index=True)
-    manufacturer_name = CharField(max_length=255)
-    private_label = BooleanField(default=False)
-    internal_number = CharField("SKU", max_length=100, db_index=True)
-    name = CharField(max_length=255)
-    description = TextField()
-    vat_category = IntegerField(help_text="0 = Full, 1 = Reduced, 2 = None")
-    max_order_quantity = IntegerField(null=True, blank=True)
-    image1_url = CharField(max_length=255, blank=True, null=True)
-    image2_url = CharField(max_length=255, blank=True, null=True)
-    image3_url = CharField(max_length=255, blank=True, null=True)
+class WawiboxExport(Model):
+    manufacturer_article_no = CharField(
+        max_length=50, blank=True, null=True, db_index=True
+    )
+    manufacturer_name = CharField(max_length=255, blank=True, null=True, editable=False)
+    private_label = BooleanField(default=False, editable=False)
+    internal_number = CharField(max_length=100, db_index=True)
+    name = CharField(max_length=255, blank=True, null=True)
+    description = TextField(blank=True, null=True, editable=False)
+    vat_category = IntegerField(
+        help_text="0 = Full, 1 = Reduced, 2 = None",
+        blank=True,
+        null=True,
+        editable=False,
+    )
+    max_order_quantity = IntegerField(null=True, blank=True, editable=False)
+    image1_url = CharField(max_length=255, blank=True, null=True, editable=False)
+    image2_url = CharField(max_length=255, blank=True, null=True, editable=False)
+    image3_url = CharField(max_length=255, blank=True, null=True, editable=False)
     returnable = BooleanField(
-        default=False, help_text="0 = non-returnable, 1 = returnable"
+        default=False, help_text="0 = non-returnable, 1 = returnable", editable=False
     )
     is_available = BooleanField(
-        default=False, help_text="0 = currently out of stock, 1 = currently in stock."
+        default=False,
+        help_text="0 = currently out of stock, 1 = currently in stock.",
+        editable=False,
     )
-    delivery_time = IntegerField(null=True, blank=True)
+    delivery_time = IntegerField(null=True, blank=True, editable=False)
     order_number = CharField(
-        max_length=100
+        max_length=100, blank=True, null=True, editable=False
     )  # unique number to identify the price offer
-    valid_from = DateField(null=True, blank=True)
-    valid_until = DateField(null=True, blank=True)
-    min_order_quantity = IntegerField(null=True, blank=True)
-    price = DecimalField(max_digits=14, decimal_places=4)
+    valid_from = DateField(null=True, blank=True, editable=False)
+    valid_until = DateField(null=True, blank=True, editable=False)
+    min_order_quantity = IntegerField(null=True, blank=True, editable=False)
+    sales_price = DecimalField(max_digits=14, decimal_places=4)
     discountable = BooleanField(
         default=False,
         help_text="0 = not eligible for discount, 1 = eligible for discount.",
+        editable=False,
     )
     # For tier pricing fill below fields
-    order_number_2 = CharField(max_length=100, blank=True, null=True)
-    min_order_quantity_2 = IntegerField(null=True, blank=True)
-    price_2 = DecimalField(max_digits=14, decimal_places=4)
+    order_number_2 = CharField(max_length=100, blank=True, null=True, editable=False)
+    min_order_quantity_2 = IntegerField(null=True, blank=True, editable=False)
+    price_2 = DecimalField(
+        max_digits=14, decimal_places=4, blank=True, null=True, editable=False
+    )
     discountable_2 = BooleanField(
         default=False,
         help_text="0 = not eligible for discount, 1 = eligible for discount.",
+        editable=False,
     )
     updated_at = DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Wawibox Product Update"
-        verbose_name_plural = "Wawibox Product Updates"
+    last_pushed_to_wawibox = DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.internal_number} - {self.name or ''}"

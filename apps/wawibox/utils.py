@@ -4,7 +4,7 @@ import os
 import re
 from apps.wawibox.mapping import field_map_wawibox_file_upload
 from django.conf import settings
-from .models import WawiboxProductUpdate
+from .models import WawiboxExport
 import re
 import datetime
 
@@ -35,7 +35,7 @@ def export_wawibox_product_data_to_csv(delimiter=";"):
     product_list = []
 
     product_data_fields = field_map_wawibox_file_upload["fields"]
-    for product_data in WawiboxProductUpdate.objects.iterator():
+    for product_data in WawiboxExport.objects.iterator():
         product_instance_values = [
             _format_wawibox_value(getattr(product_data, field_name), field_type)
             for field_name, field_type in product_data_fields
@@ -44,7 +44,7 @@ def export_wawibox_product_data_to_csv(delimiter=";"):
 
     os.makedirs(WAWIBOX_UPLOAD_PATH, exist_ok=True)
 
-    csv_name = "wawibox_product_data.csv"
+    csv_name = "wawibox_product_export.csv"
     csv_path = os.path.join(WAWIBOX_UPLOAD_PATH, csv_name)
 
     final_product_data = "\r\n".join(product_list)

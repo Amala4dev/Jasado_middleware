@@ -1,128 +1,138 @@
-from django.shortcuts import render, redirect
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.admin.views.decorators import staff_member_required
-from django.views.decorators.http import require_POST
+from django.http import FileResponse, Http404, HttpResponse
+from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.conf import settings
 from django.utils import timezone
-from django.http import HttpResponse
-from pathlib import Path
-import os
-from django.http import FileResponse, Http404
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
-from apps.gls.views import (
-    download_gls_files,
-    parse_gls_file_data,
-    push_dropshipping_orders_to_gls,
-    fetch_gls_order_feedback,
-    notify_cancelled_orders,
+from utils import (
+    export_model_data,
+    send_email,
+    delete_old_files,
 )
+
+from .exports import build_product_exports
+from .models import AdditionalMasterData, BlockedProduct, ExportTask, LogEntry, Product
+from .pricing import run_pricing_engine
+from .utils import (
+    FILE_ADDITIONAL_PRODUCTS,
+    FILE_BLOCKED_PRODUCTS,
+    FILE_PRODUCT_GTIN,
+    sync_product_relations,
+    upload_additional_products_to_db,
+    upload_blocked_products_to_db,
+    upload_product_gtin_to_db,
+    validate_file_and_extract_rows,
+)
+
+from apps.aera.models import AeraCompetitorPrice, AeraProduct
+from apps.aera.views import (
+    clear_aera_session,
+    fetch_aera_competitor_prices,
+    fetch_aera_products,
+    fetch_and_save_aera_orders,
+    push_aera_data,
+)
+
 from apps.gls.models import (
     GLSMasterData,
     GLSPriceList,
     GLSPromotionPosition,
     GLSPromotionPrice,
 )
-from apps.aera.views import (
-    fetch_aera_competitor_prices,
-    push_aera_data,
-    fetch_and_save_aera_orders,
-    fetch_aera_products,
-    clear_aera_session,
+from apps.gls.views import (
+    download_gls_files,
+    fetch_gls_order_feedback,
+    notify_cancelled_orders,
+    parse_gls_file_data,
+    push_dropshipping_orders_to_gls,
 )
-from apps.aera.models import (
-    AeraCompetitorPrice,
-    AeraProduct,
-)
-from apps.wawibox.models import (
-    WawiboxProduct,
-    WawiboxCompetitorPrice,
-)
+
+from apps.wawibox.models import WawiboxCompetitorPrice, WawiboxProduct
 from apps.wawibox.views import (
-    push_wawibox_data,
-    fetch_and_save_wawibox_orders,
     download_wawibox_files,
+    fetch_and_save_wawibox_orders,
     parse_wawibox_file_data,
+    push_wawibox_data,
 )
-from .utils import (
-    validate_file_and_extract_rows,
-    upload_additional_products_to_db,
-    upload_blocked_products_to_db,
-    FILE_ADDITIONAL_PRODUCTS,
-    FILE_BLOCKED_PRODUCTS,
-    sync_product_relations,
-)
-from utils import (
-    export_model_data,
-    send_email,
-)
-from .models import (
-    AdditionalMasterData,
-    BlockedProduct,
-    ExportTask,
-    Product,
-)
+
+# For debugging on server only
+import sys
+
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 
 def run_automations():
-    print("started", timezone.now())
+    eprint("started", timezone.now())
 
     # Fetch GLS data
     gls_files_downloaded = download_gls_files()
-    print("finished stage1", timezone.now())
+    eprint("gls_files_downloaded", timezone.now())
     gls_file_data_parsed = parse_gls_file_data()
-    print("finished stage2", timezone.now())
+    eprint("gls_file_data_parsed", timezone.now())
     gls_order_feedback_fetched = fetch_gls_order_feedback()
-    print("finished stage3", timezone.now())
+    eprint("gls_order_feedback_fetched", timezone.now())
 
     # Fetch Wawibox data
     wawibox_files_downloaded = download_wawibox_files()
-    print("finished stage4", timezone.now())
+    eprint("wawibox_files_downloaded", timezone.now())
     wawibox_file_data_parsed = parse_wawibox_file_data()
-    print("finished stage5", timezone.now())
+    eprint("wawibox_file_data_parsed", timezone.now())
     wawibox_orders_fetched = fetch_and_save_wawibox_orders()
-    print("finished stage6", timezone.now())
+    eprint("wawibox_orders_fetched", timezone.now())
 
     # Fetch Aera data
     aera_products_fetched = fetch_aera_products()
-    print("finished stage7", timezone.now())
+    eprint("aera_products_fetched", timezone.now())
     aera_prices_fetched = fetch_aera_competitor_prices()
-    print("finished stage8", timezone.now())
+    eprint("aera_prices_fetched", timezone.now())
     aera_orders_fetched = fetch_and_save_aera_orders()
-    print("finished stage9", timezone.now())
+    eprint("aera_orders_fetched", timezone.now())
     # dentalheld_orders_fetched = fetch_and_save_dentalheld_orders()
 
     # Update all db data
     create_missing_products()
-    print("finished stage10", timezone.now())
+    eprint("missing products updated", timezone.now())
 
     attach_product_fk()
-    print("finished stage12", timezone.now())
+    eprint("product fk attached", timezone.now())
 
     ############# Price Calculation and data push ##############
 
     # Calculate sales price
-    # prices_calculated = False
-    # if all(
-    #     [
-    #         gls_files_downloaded,
-    #         gls_file_data_parsed,
-    #         wawibox_files_downloaded,
-    #         wawibox_file_data_parsed,
-    #         aera_prices_fetched,
-    #     ]
-    # ):
-    #     # Perform pricing calculation logic
-    #     prices_calculated = True
+    prices_calculated = False
+    if all(
+        [
+            gls_files_downloaded,
+            gls_file_data_parsed,
+            wawibox_files_downloaded,
+            wawibox_file_data_parsed,
+            aera_prices_fetched,
+        ]
+    ):
+        prices_calculated = run_pricing_engine()
+        eprint("prices_calculated", timezone.now())
 
-    # if prices_calculated:
-    #     pass
-    #     # push_aera_data()
-    #     # push_wawibox_data()
-    #     # push_shopware_data()
-    #     # push_dentalheld_data()
-    #     # push_weclapp_data()
+    exports_prepared = False
+    if prices_calculated:
+        exports_prepared = build_product_exports()
+
+    if exports_prepared:
+        eprint("exports_prepared", timezone.now())
+        # push_aera_data()
+        # push_wawibox_data()
+        # push_shopware_data()
+        # push_dentalheld_data()
+        # push_weclapp_data()
 
     ############# Orders ##############
 
@@ -143,11 +153,14 @@ def run_automations():
 
     if gls_order_feedback_fetched:
         notify_cancelled_orders()
-        print("finished stage13", timezone.now())
+        eprint("notify_cancelled_orders", timezone.now())
     # push_feedback_to_weclapp()
 
+    cleanup_logs()
+    cleanup_exports()
     clear_aera_session()
-    print("finished stage14", timezone.now())
+    delete_old_files(7)
+    eprint("Automation completed", timezone.now())
 
     return True
 
@@ -206,6 +219,33 @@ def upload_blocked_products(request):
     return redirect(changelist_url)
 
 
+@staff_member_required
+@require_POST
+def upload_product_gtin(request):
+    uploaded_file = request.FILES.get("file")
+    changelist_url = reverse("admin:core_productgtin_changelist")
+
+    if not uploaded_file:
+        messages.error(request, "Please choose a .xlsx file.")
+        return redirect(changelist_url)
+
+    try:
+        rows = validate_file_and_extract_rows(uploaded_file, FILE_PRODUCT_GTIN)
+        upload_status = upload_product_gtin_to_db(rows)
+    except ValueError as err:
+        messages.error(request, str(err))
+        return redirect(changelist_url)
+    except Exception as err:
+        messages.error(request, f"Import failed: {err}")
+        return redirect(changelist_url)
+
+    filename = getattr(uploaded_file, "name", "")
+    messages.success(
+        request, f"Imported {upload_status.get('total', 0)} rows from “{filename}”."
+    )
+    return redirect(changelist_url)
+
+
 def create_missing_products():
     to_create = []
 
@@ -215,15 +255,19 @@ def create_missing_products():
     gls_items = GLSMasterData.objects.values(
         "article_no",
         "manufacturer_article_no",
+        "article_group_no",
         "manufacturer",
         "description",
         "blocked",
+        "store_refrigerated",
     )
 
     existing = set(Product.objects.values_list("supplier", "supplier_article_no"))
 
     incoming_gls = [
-        ("GLS", item["article_no"]) for item in gls_items if item["article_no"]
+        (Product.SUPPLIER_GLS, item["article_no"])
+        for item in gls_items
+        if item["article_no"]
     ]
 
     missing_gls = [item for item in incoming_gls if item not in existing]
@@ -242,7 +286,9 @@ def create_missing_products():
                 name=g.get("description"),
                 manufacturer_id=g.get("manufacturer"),
                 manufacturer_article_no=g.get("manufacturer_article_no"),
+                gls_article_group_no=g.get("article_group_no"),
                 is_blocked=g.get("blocked"),
+                store_refrigerated=g.get("store_refrigerated"),
                 sku=f"LG{supplier_article_no}",
             )
         )
@@ -255,13 +301,16 @@ def create_missing_products():
         "manufacturer_article_no",
         "manufacturer",
         "name",
+        "store_refrigerated",
     )
 
     # refresh existing AFTER GLS additions
     existing = existing.union(set(missing_gls))
 
     incoming_non_gls = [
-        ("NON-GLS", item["article_no"]) for item in non_gls_items if item["article_no"]
+        (Product.SUPPLIER_NON_GLS, item["article_no"])
+        for item in non_gls_items
+        if item["article_no"]
     ]
 
     missing_non_gls = [item for item in incoming_non_gls if item not in existing]
@@ -270,6 +319,7 @@ def create_missing_products():
 
     for supplier, supplier_article_no in missing_non_gls:
         g = non_gls_map.get(supplier_article_no)
+
         if not g:
             continue
 
@@ -282,6 +332,7 @@ def create_missing_products():
                 name=g.get("name"),
                 manufacturer=manufacturer,
                 manufacturer_article_no=g.get("manufacturer_article_no"),
+                store_refrigerated=g.get("store_refrigerated"),
                 sku=f"{(manufacturer or '')[:2].upper()}{supplier_article_no}",
             )
         )
@@ -317,7 +368,9 @@ def create_missing_products():
 
         b = blocked_map[sku]
 
-        supplier = "GLS" if sku.startswith("LG") else "NON-GLS"
+        supplier = (
+            Product.SUPPLIER_GLS if sku.startswith("LG") else Product.SUPPLIER_NON_GLS
+        )
 
         to_create.append(
             Product(
@@ -368,6 +421,68 @@ def attach_product_fk():
         return False
 
 
+@staff_member_required
+@require_POST
+def export_kaufland_data(request):
+    file_type = request.POST.get("file_type") or "excel"
+    changelist_url = reverse("admin:core_productgtin_changelist")
+
+    if file_type not in ["csv", "excel"]:
+        messages.error(request, "Please choose a valid file type.")
+        return redirect(changelist_url)
+
+    config = {
+        "file_type": file_type,
+        "model_label": "core.ProductGtin",
+        "display_name": "Kaufland_GPRS",
+        "exclude_fields": ["id", "article_no", "pk", "sku", "supplier"],
+    }
+
+    ExportTask.objects.create(
+        user=request.user,
+        name=config["display_name"],
+        file_type=file_type,
+        config=config,
+    )
+
+    messages.success(
+        request,
+        "Export task has been created. You will receive an email once it is ready for download.",
+    )
+    return redirect(changelist_url)
+
+
+@staff_member_required
+@require_POST
+def export_amazon_data(request):
+    file_type = request.POST.get("file_type") or "excel"
+    changelist_url = reverse("admin:core_productgtin_changelist")
+
+    if file_type not in ["csv", "excel"]:
+        messages.error(request, "Please choose a valid file type.")
+        return redirect(changelist_url)
+
+    config = {
+        "file_type": file_type,
+        "model_label": "core.ProductGtin",
+        "display_name": "Amazon_GPRS",
+        "exclude_fields": ["id", "article_no", "pk", "sku", "supplier"],
+    }
+
+    ExportTask.objects.create(
+        user=request.user,
+        name=config["display_name"],
+        file_type=file_type,
+        config=config,
+    )
+
+    messages.success(
+        request,
+        "Export task has been created. You will receive an email once it is ready for download.",
+    )
+    return redirect(changelist_url)
+
+
 def process_pending_exports():
 
     pending_tasks = ExportTask.objects.filter(
@@ -384,7 +499,8 @@ def process_pending_exports():
         try:
             response = export_model_data(task.config)
             file_ext = ".csv" if task.file_type == "csv" else ".xlsx"
-            filename = f"{task.model_label.replace('.', '_')}_{timezone.now().strftime('%Y%m%d_%H%M%S')}{file_ext}"
+            display_name = task.config.get("display_name")
+            filename = f"{display_name}_{timezone.now().strftime('%d%m%Y')}{file_ext}"
 
             export_dir = Path(settings.MEDIA_ROOT) / "exports"
             export_dir.mkdir(parents=True, exist_ok=True)
@@ -440,3 +556,41 @@ def download_file(request):
 
 def get_download_url(file_path):
     return f"{settings.SITE_URL}{reverse('download_file')}?file_path={file_path}"
+
+
+def cleanup_logs():
+    limit = datetime.now() - timedelta(days=14)
+    LogEntry.objects.filter(created_at__lt=limit).delete()
+
+
+def cleanup_exports():
+    limit = datetime.now() - timedelta(days=7)
+    old_tasks = ExportTask.objects.filter(created_at__lt=limit)
+
+    for task in old_tasks:
+        if task.download_url:
+            try:
+                query = urlparse(task.download_url).query
+                file_param = parse_qs(query).get("file_path", [])
+
+                if file_param:
+                    relative_path = file_param[0]
+                    full_path = os.path.join(settings.MEDIA_ROOT, relative_path)
+
+                    if os.path.isfile(full_path):
+                        os.remove(full_path)
+
+            except Exception:
+                pass
+
+        task.delete()
+
+
+def core(request):
+    from django.http import JsonResponse
+
+    data = run_pricing_engine()
+    # data = create_missing_products()
+    # data = build_product_exports()
+    # data = attach_product_fk()
+    return JsonResponse(data, safe=False)

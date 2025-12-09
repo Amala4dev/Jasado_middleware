@@ -28,6 +28,7 @@ class GLSMasterDataAdmin(admin.ModelAdmin):
             "Basic Info",
             {
                 "fields": (
+                    "product",
                     "article_no",
                     "description",
                     "created_on",
@@ -237,8 +238,10 @@ class GLSPromotionPositionAdmin(admin.ModelAdmin):
 class GLSPromotionPriceAdmin(admin.ModelAdmin):
     list_display = (
         "article_no",
+        "article_name",
         "action_code",
-        "promotion_price",
+        "short_text",
+        "promotional_purchase_price",
         "valid_from",
         "valid_to",
         "last_fetch_from_gls",
@@ -252,6 +255,8 @@ class GLSPromotionPriceAdmin(admin.ModelAdmin):
                 "fields": (
                     "product",
                     "article_no",
+                    "article_name",
+                    "short_text",
                     "action_code",
                     "origin_code",
                     "change_flag",
@@ -613,6 +618,59 @@ class GLSOrderStatusAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, r, o=None):
+        return False
+
+    def has_delete_permission(self, r, o=None):
+        return False
+
+
+@admin.register(GLSHandlingSurcharge)
+class GLSHandlingSurchargeAdmin(admin.ModelAdmin):
+    list_display = (
+        "article_group_no",
+        "article_group_name",
+        "display_value",
+    )
+
+    list_display_links = (
+        "article_group_no",
+        "article_group_name",
+    )
+    search_fields = ("article_group_no", "article_group_name")
+    readonly_fields = (
+        "article_group_no",
+        "article_group_name",
+        "display_value",
+    )
+
+    fieldsets = (
+        ("Article Group", {"fields": ("article_group_no", "article_group_name")}),
+        ("Surcharge Details", {"fields": ("fee_type", "value", "display_value")}),
+    )
+
+    def display_value(self, obj):
+        if obj.fee_type == obj.PERCENT:
+            return f"{obj.value}%"
+        return f"€{obj.value}"
+
+    display_value.short_description = "Handling Fee"
+
+    def has_add_permission(self, r, o=None):
+        return False
+
+    def has_delete_permission(self, r, o=None):
+        return False
+
+
+@admin.register(GLSProductGroup)
+class GLSProductGroupAdmin(admin.ModelAdmin):
+    list_display = (
+        "product_group_no",
+        "product_group_name",
+    )
+    search_fields = ("product_group_no", "product_group_name")
+
+    def has_add_permission(self, r, o=None):
         return False
 
     def has_delete_permission(self, r, o=None):

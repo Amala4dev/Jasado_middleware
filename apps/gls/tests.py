@@ -1,14 +1,7 @@
 from django.test import TestCase
 
 # Create your tests here.
-# Get purchase price from gls (fetch all gls documents and populate the models)
-# if any of the above fails, retry again and send email immediatley
 
-# Get competitor prices from aera, and update the aera competior price models
-# Get competitor prices from wawibox and update the wawibox competior price models
-# Calculate sales price, save in pricing model (all the above must hv workd without errors)
-
-# sales price calc must work first
 # Push sales price, master data, and gls stock list to weclapp
 # Push sales price and other data to shopware 6
 # Push sales price and product data to aera
@@ -24,7 +17,7 @@ from django.test import TestCase
 # send aera orders to weclapp
 # send wawibox orders to weclapp
 # send dentalheld orders to weclapp
-# get weclapp orders
+# get weclapp orders ready for dropshipping
 # send weclapp orders to gls
 # get gls order delivery feedback
 # send order delivery feedback to weclapp

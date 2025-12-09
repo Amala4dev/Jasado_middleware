@@ -3,14 +3,13 @@ import requests
 from datetime import date
 from django.utils import timezone
 from django.db import transaction
-from decimal import Decimal
 
 import time
 from django.http import JsonResponse, HttpResponse
 from .models import (
     AeraSession,
     AeraProduct,
-    AeraProductUpdate,
+    AeraExport,
     AeraCompetitorPrice,
     AeraOrder,
     AeraOrderItem,
@@ -21,14 +20,8 @@ from .utils import (
 from utils import make_time_zone_aware
 from apps.core.models import (
     TaskStatus,
-    DynamicPrice,
-    AdditionalMasterData,
-    BlockedProduct,
 )
-from apps.gls.models import (
-    GLSMasterData,
-    GLSStockLevel,
-)
+
 
 # Constants
 AERA_BASE_URL = settings.AERA_BASE_URL
@@ -134,11 +127,6 @@ def fetch_aera_products():
 
 
 def fetch_aera_competitor_prices(sku=None):
-    # should_run = TaskStatus.should_run(TaskStatus.FETCH_PRICES_AERA)
-    should_run = 1
-    if not should_run:
-        return False
-
     url = f"{AERA_BASE_URL}/Roles/Sellers/{AERA_COMPANY_ID}/Offers/CompetitorOffers"
     params = {
         "ResultType": "OfferListWithTop",
@@ -216,101 +204,11 @@ def fetch_aera_competitor_prices(sku=None):
     return True
 
 
-@transaction.atomic
-def _prepare_aera_data():
-    all_ok = True
-
-    try:
-        blocked_articles = set(
-            BlockedProduct.objects.values_list("article_no", flat=True)
-        )
-        stock_map = {s.article_no: s.inventory for s in GLSStockLevel.objects.all()}
-        calculated_price = {
-            s.article_no: s.calculated_sales_price for s in DynamicPrice.objects.all()
-        }
-        now = timezone.now()
-
-        instances = []
-
-        # --- GLS Master Data ---
-        master_data = GLSMasterData.objects.exclude(article_no__in=blocked_articles)
-        for data in master_data:
-            stock = stock_map.get(data.article_no, Decimal("0"))
-            offer_type_id = 1
-            availability_type_id = 1 if stock > 0 else 2
-            different_delivery_time = 3 if stock > 0 else 14
-            shipped_temperature_stable = not data.store_refrigerated
-
-            instances.append(
-                AeraProductUpdate(
-                    sku=data.article_no,
-                    product_name=data.description,
-                    manufacturer=data.manufacturer_name,
-                    mpn=data.manufacturer_article_no,
-                    gtin=data.pzn_no,
-                    offer_type_id=offer_type_id,
-                    availability_type_id=availability_type_id,
-                    different_delivery_time=different_delivery_time,
-                    shipped_temperature_stable=shipped_temperature_stable,
-                    calculated_sales_price=calculated_price[data.article_no],
-                    updated_at=now,
-                )
-            )
-
-        # --- Additional Products ---
-        additional_products = AdditionalMasterData.objects.exclude(
-            article_no__in=blocked_articles
-        )
-        for data in additional_products:
-            stock = stock_map.get(data.article_no, Decimal("0"))
-            offer_type_id = 1
-            availability_type_id = 1 if stock > 0 else 2
-            different_delivery_time = 3 if stock > 0 else 14
-
-            instances.append(
-                AeraProductUpdate(
-                    sku=data.article_no,
-                    product_name=data.name,
-                    manufacturer=data.manufacturer,
-                    mpn=data.manufacturer_article_no,
-                    gtin=data.gtin,
-                    offer_type_id=offer_type_id,
-                    availability_type_id=availability_type_id,
-                    different_delivery_time=different_delivery_time,
-                    shipped_temperature_stable=True,
-                    calculated_sales_price=calculated_price[data.article_no],
-                    updated_at=now,
-                )
-            )
-
-        AeraProductUpdate.objects.all().delete()
-        AeraProductUpdate.objects.bulk_create(instances, batch_size=500)
-
-        AeraLog.info("Data for transfer prepared successfully")
-    except Exception as e:
-        all_ok = False
-        AeraLog.error(f"Failed to prepare data for transfer: {str(e)}")
-
-    if all_ok:
-        TaskStatus.set_success(TaskStatus.PREPARE_DATA_AERA)
-    else:
-        TaskStatus.set_failure(TaskStatus.PREPARE_DATA_AERA)
-
-    return all_ok
-
-
 def push_aera_data(sku=None):
-    should_run = TaskStatus.should_run(TaskStatus.DATA_TRANSFER_AERA)
-    aera_data_prepared = _prepare_aera_data()
-    if not (should_run and aera_data_prepared):
-        return
-
     url = f"{AERA_BASE_URL}/Roles/Sellers/{AERA_COMPANY_ID}/Offers/PartialImports"
 
     products = (
-        AeraProductUpdate.objects.filter(sku__in=sku)
-        if sku
-        else AeraProductUpdate.objects.all()
+        AeraExport.objects.filter(sku__in=sku) if sku else AeraExport.objects.all()
     )
     valid_products = [
         p for p in products if p.calculated_sales_price and p.calculated_sales_price > 0
@@ -360,60 +258,7 @@ def push_aera_data(sku=None):
     response.raise_for_status()
 
 
-# def update_sales_prices(sku=None):
-#     # should_run = TaskStatus.should_run(TaskStatus.UPDATE_PRICES_AERA)
-#     should_run = 1
-#     if not should_run:
-#         return
-
-#     url = f"{AERA_BASE_URL}/Roles/Sellers/{AERA_COMPANY_ID}/Offers/PartialImports"
-
-#     products = Product.objects.filter(sku__in=sku) if sku else Product.objects.all()
-#     valid_products = [p for p in products if p.calculated_price and p.calculated_price > 0]
-
-#     payload = {
-#         "Data": {
-#             "CreateOfferImportDataList": {
-#                 "Items": [
-#                     {
-#                         "SKU": p.sku,
-#                         "OfferTypeId": 1,
-#                         "LowerBound1": 1,
-#                         "NetPrice1": p.calculated_price,
-#                     }
-#                     for p in valid_products
-#                 ]
-#             }
-#         }
-#     }
-
-#     params = {
-#         "ProcessingDate": date.today().isoformat(),
-#         "Currency": "EUR",
-#         "ValidateOnly": True,
-#     }
-#     session_id = get_aera_session_id()
-#     headers = {
-#         "Ao-SessionId": session_id,
-#         "Accept": "application/json",
-#     }
-#     response = requests.post(url, json=payload, headers=headers, params=params)
-#     if response.status_code == 200:
-#         data = response.json()
-#         AeraLog.info("Updated sales prices successfully")
-#         TaskStatus.set_success(TaskStatus.UPDATE_PRICES_AERA)
-#         return data
-
-#     AeraLog.error(f"sales price update failed: {response.text}")
-#     response.raise_for_status()
-
-
 def fetch_aera_orders(test_mode=False):
-    # should_run = TaskStatus.should_run(TaskStatus.FETCH_ORDERS_AERA)
-    should_run = 1
-    if not should_run:
-        return False
-
     url = f"{AERA_BASE_URL}/Roles/Sellers/{AERA_COMPANY_ID}/Orders"
     orders = []
 
@@ -688,6 +533,7 @@ def fetch_order_detail(order_token):
 
 
 def fetch_and_save_aera_orders():
+    return True
     success, orders = fetch_aera_orders()
 
     for order in orders:

@@ -2,31 +2,25 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 from django.db import models
-from django.db.models import F
-from django.db import IntegrityError
-from django.core.exceptions import ValidationError
 from django.db.models import Model
-from django.db.models import QuerySet
 from django.db.models import ForeignKey
-from django.db.models import OneToOneField
 from django.db.models import CharField
 from django.db.models import BooleanField
-from django.db.models import DateField
 from django.db.models import JSONField
-from django.db.models import IntegerField
 from django.db.models import DateTimeField
 from django.db.models import TextField
 from django.db.models import DecimalField
 from utils import CleanDecimalField
 from django.db.models import SET_NULL
 from django.contrib.auth import get_user_model
+from decimal import Decimal
 
 User = get_user_model()
 
 
 class LogEntry(models.Model):
     # Levels
-    INFO = "INFO"
+    INFO = "SUCCESS"
     WARNING = "WARNING"
     ERROR = "ERROR"
 
@@ -37,7 +31,7 @@ class LogEntry(models.Model):
     SHOPWARE = "SHOPWARE"
     WAWIBOX = "WAWIBOX"
     DENTALHELD = "DENTALHELD"
-    SYSTEM = "SYSTEM"
+    CORE = "CORE"
 
     source = models.CharField(max_length=50)
     level = models.CharField(max_length=20)
@@ -96,6 +90,9 @@ class TaskStatus(models.Model):
 
 
 class Product(Model):
+    SUPPLIER_GLS = "GLS"
+    SUPPLIER_NON_GLS = "NON-GLS"
+
     manufacturer_article_no = CharField(
         max_length=50,
         db_index=True,
@@ -108,12 +105,21 @@ class Product(Model):
         null=True,
         blank=True,
     )
-    supplier = CharField(max_length=255, default="GLS")
+    supplier = CharField(max_length=255, default=SUPPLIER_GLS)
     sku = CharField(max_length=50, null=True, blank=True, unique=True, db_index=True)
     name = CharField(max_length=255, null=True, blank=True)
     manufacturer = CharField(max_length=255, editable=False, null=True, blank=True)
     manufacturer_id = CharField(max_length=255, editable=False, null=True, blank=True)
+    gls_article_group_no = CharField(max_length=50, blank=True, null=True)
     description = TextField(null=True, blank=True)
+    sales_price = DecimalField(
+        max_digits=12,
+        help_text="Last calculated sales price",
+        null=True,
+        blank=True,
+        decimal_places=2,
+    )
+    store_refrigerated = BooleanField(default=False)
     created_at = DateTimeField(editable=False, auto_now_add=True)
     updated_at = DateTimeField(editable=False, auto_now=True)
     is_blocked = BooleanField(default=True)
@@ -123,7 +129,11 @@ class Product(Model):
         verbose_name_plural = "All Products"
 
     def __str__(self):
-        return self.sku or "product"
+        try:
+            ret = f"SKU: {self.sku}, Name: {self.name}"
+        except:
+            ret = "Product"
+        return ret
 
     def generate_sku(self):
         if not self.supplier_article_no:
@@ -163,12 +173,20 @@ class AdditionalMasterData(Model):
     )
     name = CharField(max_length=250, blank=True, null=True)
     article_no = CharField(max_length=50, blank=True, null=True)
-    description = CharField(max_length=255, blank=True, null=True)
+    description = TextField(blank=True, null=True)
     active = BooleanField(default=True)
-    width = CleanDecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
-    height = CleanDecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
-    length = CleanDecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
-    weight = CleanDecimalField(max_digits=14, decimal_places=4, null=True, blank=True)
+    width = CleanDecimalField(
+        max_digits=14, decimal_places=4, help_text="unit(mm)", null=True, blank=True
+    )
+    height = CleanDecimalField(
+        max_digits=14, decimal_places=4, help_text="unit(mm)", null=True, blank=True
+    )
+    length = CleanDecimalField(
+        max_digits=14, decimal_places=4, help_text="unit(mm)", null=True, blank=True
+    )
+    weight = CleanDecimalField(
+        max_digits=14, decimal_places=4, help_text="weight(g)", null=True, blank=True
+    )
     manufacturer_article_no = CharField(max_length=50, blank=True, null=True)
     article_calculation_price = CleanDecimalField(
         max_digits=14,
@@ -214,63 +232,87 @@ class BlockedProduct(Model):
         return self.article_no
 
 
-class DynamicPrice(models.Model):
-    product = ForeignKey(
-        Product,
-        on_delete=SET_NULL,
-        null=True,
-        blank=True,
-        related_name="dynamic_price",
-        editable=False,
-    )
-    sku = models.CharField(max_length=50, unique=True)
-    net_own = models.DecimalField(
-        verbose_name="AERA Own Net Price",
-        help_text="Net price from AERA for Jasado’s own offer",
-        max_digits=12,
-        decimal_places=2,
-    )
-    net_top_1 = models.DecimalField(
-        verbose_name="AERA Top 1 Net Price",
-        help_text="Lowest competitor net price on AERA",
-        max_digits=12,
-        decimal_places=2,
-    )
-    net_top_2 = models.DecimalField(
-        verbose_name="AERA Top 2 Net Price",
-        help_text="Second lowest competitor net price on AERA",
-        max_digits=12,
-        decimal_places=2,
-    )
-    net_top_3 = models.DecimalField(
-        verbose_name="AERA Top 3 Net Price",
-        help_text="Third lowest competitor net price on AERA",
-        max_digits=12,
-        decimal_places=2,
-    )
-    calculated_sales_price = models.DecimalField(
-        verbose_name="Calculated Price",
-        help_text="Final sales price calculated by middleware",
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True,
-    )
-    last_calculated = models.DateTimeField(
-        verbose_name="Last Calculated",
-        help_text="Timestamp of the last price calculation",
-        null=True,
-        blank=True,
-    )
-    last_fetch_from_aera = models.DateTimeField(
-        verbose_name="Last Fetched from AERA",
-        help_text="Timestamp of the last data fetch from AERA",
-        null=True,
-        blank=True,
-    )
+class ProductGtin(Model):
+    SUPPLIER_GLS = "GLS"
+    SUPPLIER_NON_GLS = "NON-GLS"
+
+    article_no = CharField(max_length=100, db_index=True, null=True, blank=True)
+    gtin = CharField(verbose_name="ean", max_length=200, null=True, blank=True)
+    sku = CharField(max_length=200, db_index=True, null=True, blank=True)
+    supplier = CharField(max_length=255, default=SUPPLIER_GLS, editable=False)
+
+    class Meta:
+        verbose_name_plural = "Product GTIN"
 
     def __str__(self):
-        return self.sku
+        return self.gtin or "gtin"
+
+    def _supplier_obj(self):
+        from apps.gls.models import GLSMasterData, GLSSupplier
+
+        if self.supplier == self.SUPPLIER_GLS:
+            md = GLSMasterData.objects.filter(article_no=self.article_no).first()
+            if not md:
+                return None
+            return GLSSupplier.objects.filter(supplier_no=md.manufacturer).first()
+        else:
+            return None
+
+    def product_safety_contact_name(self):
+        s = self._supplier_obj()
+        return s.name1 if s else None
+
+    product_safety_contact_name.label = "product_safety_contact.name"
+    product_safety_contact_name = property(product_safety_contact_name)
+
+    def product_safety_contact_address(self):
+        s = self._supplier_obj()
+        if not s:
+            return None
+
+        parts = [
+            s.street,
+            s.postal_code,
+            s.city,
+            s.country.upper() if s.country else None,
+        ]
+
+        return ", ".join([p for p in parts if p])
+
+    product_safety_contact_address.label = "product_safety_contact.address"
+    product_safety_contact_address = property(product_safety_contact_address)
+
+    def product_safety_contact_url(self):
+        s = self._supplier_obj()
+        return s.url if s else None
+
+    product_safety_contact_url.label = "product_safety_contact.url"
+    product_safety_contact_url = property(product_safety_contact_url)
+
+    def product_safety_contact_email_address(self):
+        s = self._supplier_obj()
+        return s.email if s else None
+
+    product_safety_contact_email_address.label = "product_safety_contact.email_address"
+    product_safety_contact_email_address = property(
+        product_safety_contact_email_address
+    )
+
+    def product_safety_contact_phone_number(self):
+        s = self._supplier_obj()
+        return s.phone if s else None
+
+    product_safety_contact_phone_number.label = "product_safety_contact.phone_number"
+    product_safety_contact_phone_number = property(product_safety_contact_phone_number)
+
+    @property
+    def locale(self):
+        s = self._supplier_obj()
+        country = s.country if s else None
+        if not country:
+            return None
+        country = country.strip()
+        return f"{country.lower()}-{country.upper()}"
 
 
 class ExportTask(Model):
@@ -302,3 +344,61 @@ class ExportTask(Model):
 
     def __str__(self):
         return self.name
+
+
+class MiddlewareSetting(Model):
+    RULE_CHEAPEST = "cheapest"
+    RULE_AVERAGE = "average"
+
+    RULE_CHOICES = [
+        (RULE_CHEAPEST, "Cheapest offer"),
+        (RULE_AVERAGE, "Average of 3 cheapest offers"),
+    ]
+
+    minimum_margin = DecimalField(
+        verbose_name="Global minimum margin in percentage (%)",
+        max_digits=5,
+        decimal_places=2,
+        help_text="Eg 2.5%, 1.5%",
+        default=0,
+    )
+    competitor_rule = CharField(
+        verbose_name="Default competitor rule",
+        max_length=20,
+        default=RULE_CHEAPEST,
+        choices=RULE_CHOICES,
+    )
+    undercut_value = DecimalField(
+        max_digits=6,
+        help_text="Amount to subtract from competitor price (x.xx €)",
+        decimal_places=2,
+        default=0,
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return "Middleware Settings"
+
+    @property
+    def normalised_minimum_margin(self):
+        return self.minimum_margin / Decimal(100)
+
+
+class ProductPriceHistory(Model):
+    product = ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="price_history"
+    )
+
+    sales_price = DecimalField(max_digits=12, decimal_places=2)
+    calculated_at = DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-calculated_at"]
+        indexes = [
+            models.Index(fields=["product", "-calculated_at"]),
+            models.Index(fields=["calculated_at"]),
+        ]
+        verbose_name_plural = "Product Price History"
+
+    def __str__(self):
+        return f"{self.product_id} → {self.sales_price} @ {self.calculated_at}"

@@ -14,6 +14,21 @@ urlpatterns = [
         name="upload_blocked_products",
     ),
     path(
+        "import/product-gtin/",
+        views.upload_product_gtin,
+        name="upload_product_gtin",
+    ),
+    path(
+        "export/amazon-data/",
+        views.export_amazon_data,
+        name="export_amazon_data",
+    ),
+    path(
+        "export/kaufland-data/",
+        views.export_kaufland_data,
+        name="export_kaufland_data",
+    ),
+    path(
         "export/",
         views.process_pending_exports,
         name="process_pending_exports",
@@ -27,5 +42,10 @@ urlpatterns = [
         "run/",
         views.run_automations,
         name="run_automations",
+    ),
+    path(
+        "core/",
+        views.core,
+        name="core",
     ),
 ]

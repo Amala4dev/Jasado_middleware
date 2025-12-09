@@ -2,17 +2,19 @@ import os
 from datetime import date, datetime
 import openpyxl
 from django.db import IntegrityError
-from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.db import transaction
 from .models import (
     Product,
     AdditionalMasterData,
     BlockedProduct,
+    LogEntry,
+    ProductGtin,
 )
 
 FILE_ADDITIONAL_PRODUCTS = "additional_products"
 FILE_BLOCKED_PRODUCTS = "blocked_products"
+FILE_PRODUCT_GTIN = "product_gtin"
 
 REQUIRED_HEADERS = {
     FILE_ADDITIONAL_PRODUCTS: [
@@ -22,6 +24,13 @@ REQUIRED_HEADERS = {
         "articlecalculationprices",
     ],
     FILE_BLOCKED_PRODUCTS: ["artikelnummer"],
+    FILE_PRODUCT_GTIN: ["artnrgls", "gtin"],
+}
+
+HEADER_ROW_NUMBER = {
+    FILE_ADDITIONAL_PRODUCTS: 2,
+    FILE_BLOCKED_PRODUCTS: 2,
+    FILE_PRODUCT_GTIN: 1,
 }
 
 
@@ -94,6 +103,22 @@ def row_to_item(fields, file_type):
             "manufacturer": manufacturer,
         }
 
+    if file_type == FILE_PRODUCT_GTIN:
+        article_no = clean_text(fields.get("artnrgls"))
+        if article_no:
+            article_no = str(article_no).strip()
+            if article_no.isdigit() and len(article_no) < 5:
+                article_no = article_no.zfill(5)
+
+        sku = clean_text(fields.get("sku"))
+        gtin = clean_text(fields.get("gtin"))
+
+        return {
+            "article_no": article_no,
+            "sku": sku,
+            "gtin": gtin,
+        }
+
     name = clean_text(fields.get("name"))
     article_no = clean_text(fields.get("articlenumber"))
     description = clean_text(fields.get("itemdescription"))
@@ -137,7 +162,11 @@ def extract_rows_from_file(uploaded_file, file_type):
     sheet = workbook.worksheets[0]
 
     # Get header row as plain values
-    header_values = next(sheet.iter_rows(min_row=2, max_row=2, values_only=True), None)
+    header_row_no = HEADER_ROW_NUMBER[file_type]
+    header_values = next(
+        sheet.iter_rows(min_row=header_row_no, max_row=header_row_no, values_only=True),
+        None,
+    )
 
     if not header_values:
         workbook.close()
@@ -378,11 +407,75 @@ def upload_blocked_products_to_db(rows, batch_size=500):
     }
 
 
+def upload_product_gtin_to_db(rows, batch_size=500):
+    unique_field = "sku"
+
+    skus = [row.get(unique_field) for row in rows if row.get(unique_field)]
+    skus = list(set(skus))
+
+    existing_map = {}
+
+    for i in range(0, len(skus), batch_size):
+        chunk = skus[i : i + batch_size]
+        qs = ProductGtin.objects.filter(sku__in=chunk)
+        for obj in qs:
+            existing_map[obj.sku] = obj
+
+    created_count = 0
+    updated_count = 0
+
+    to_create = []
+    to_update = []
+
+    for row in rows:
+        sku = row.get("sku")
+        if not sku:
+            continue
+
+        article_no = row.get("article_no")
+        gtin = row.get("gtin")
+
+        if sku in existing_map:
+            obj = existing_map[sku]
+            obj.article_no = article_no
+            obj.gtin = gtin
+            to_update.append(obj)
+            updated_count += 1
+
+        else:
+            obj = ProductGtin(
+                sku=sku,
+                article_no=article_no,
+                gtin=gtin,
+            )
+            to_create.append(obj)
+            created_count += 1
+
+    for i in range(0, len(to_update), batch_size):
+        batch_update = to_update[i : i + batch_size]
+
+        with transaction.atomic():
+            if batch_update:
+                ProductGtin.objects.bulk_update(batch_update, ["article_no", "gtin"])
+
+    for i in range(0, len(to_create), batch_size):
+        batch_create = to_create[i : i + batch_size]
+
+        with transaction.atomic():
+            if batch_create:
+                ProductGtin.objects.bulk_create(batch_create)
+
+    return {
+        "created": created_count,
+        "updated": updated_count,
+        "total": created_count + updated_count,
+    }
+
+
 def sync_product_relations(
     model, product_field="product", has_sku=True, is_gls_model=True
 ):
     product_map = dict(Product.objects.values_list("sku", "id"))
-
     objs = model.objects.filter(**{f"{product_field}__isnull": True})
 
     updates = []
@@ -415,3 +508,19 @@ def sync_product_relations(
         model.objects.bulk_update(updates, [f"{product_field}_id"], batch_size=1000)
 
     return True
+
+
+class CoreLog:
+    @staticmethod
+    def info(msg):
+        LogEntry.objects.create(source=LogEntry.CORE, level=LogEntry.INFO, message=msg)
+
+    @staticmethod
+    def warning(msg):
+        LogEntry.objects.create(
+            source=LogEntry.CORE, level=LogEntry.WARNING, message=msg
+        )
+
+    @staticmethod
+    def error(msg):
+        LogEntry.objects.create(source=LogEntry.CORE, level=LogEntry.ERROR, message=msg)

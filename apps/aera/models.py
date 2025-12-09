@@ -3,15 +3,12 @@ from django.db.models import ForeignKey
 from django.db.models import OneToOneField
 from django.db.models import CharField
 from django.db.models import BooleanField
-from django.db.models import DateField
 from django.db.models import IntegerField
 from django.db.models import TextField
 from django.db.models import DateTimeField
 from django.db.models import DecimalField
 from django.db.models import SET_NULL
 from django.db.models import CASCADE
-from utils import CleanDecimalField
-from django.core.validators import MaxValueValidator
 from apps.core.models import Product
 
 OFFER_TYPE_ID_MAP = {
@@ -43,7 +40,6 @@ class AeraProduct(Model):
         null=True,
         blank=True,
         related_name="aera_product",
-        editable=False,
     )
     sku = CharField(max_length=50, unique=True)
     aera_product_id = IntegerField(null=True, blank=True)
@@ -180,7 +176,7 @@ class AeraCompetitorPrice(Model):
         return self.sku
 
 
-class AeraProductUpdate(Model):
+class AeraExport(Model):
     """
     Holds product data pushed to Aera
     """
@@ -194,20 +190,20 @@ class AeraProductUpdate(Model):
     availability_type_id = IntegerField(
         default=1, help_text="1=In stock, 2=Procurement Article"
     )
-    different_delivery_time = IntegerField(default=0, help_text="Delivery time in days")
-    shipped_temperature_stable = BooleanField(default=True)
-    calculated_sales_price = CleanDecimalField(
-        max_digits=14, decimal_places=4, default=0
+    different_delivery_time = IntegerField(
+        verbose_name="Delivery time", default=0, help_text="Delivery time in days"
     )
+    shipped_temperature_stable = BooleanField(default=True)
+    weight = DecimalField(
+        max_digits=12, decimal_places=4, null=True, blank=True, editable=False
+    )
+    sales_price = DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     updated_at = DateTimeField(auto_now=True)
+    last_pushed_to_aera = DateTimeField(null=True, blank=True)
 
     @property
     def offer_type_name(self):
         return OFFER_TYPE_ID_MAP.get(self.offer_type_id, "Unknown")
-
-    class Meta:
-        verbose_name = "Aera Product Update"
-        verbose_name_plural = "Aera Product Updates"
 
     def __str__(self):
         return f"{self.sku} - {self.product_name or ''}"

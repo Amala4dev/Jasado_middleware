@@ -8,11 +8,11 @@ from django.db.models import BooleanField
 from django.db.models import DateField
 from django.db.models import IntegerField
 from django.db.models import DateTimeField
-from django.db.models import OneToOneField
 from django.db.models import SET_NULL
 from utils import CleanDecimalField
 from django.core.validators import MaxValueValidator
 from apps.core.models import Product
+from decimal import Decimal
 
 ARTICLE_GROUP_MAP = {
     "0": "Material & Instrumente",
@@ -74,6 +74,17 @@ class GLSSupplier(Model):
         return self.supplier_no or "Supplier"
 
 
+class GLSProductGroup(Model):
+    product_group_no = CharField(max_length=20, unique=True)
+    product_group_name = CharField(max_length=100, null=True, blank=True)
+    last_updated = DateTimeField(
+        auto_now=True,
+    )
+
+    def __str__(self):
+        return self.product_group_no
+
+
 class GLSMasterData(Model):
     product = ForeignKey(
         Product,
@@ -82,7 +93,7 @@ class GLSMasterData(Model):
         blank=True,
         related_name="gls_master_data",
         verbose_name="Product SKU",
-        editable=False,
+        # editable=False,
     )
     article_no = CharField(max_length=50, unique=True)
     description = CharField(max_length=255, blank=True, null=True)
@@ -150,7 +161,12 @@ class GLSMasterData(Model):
 
     @property
     def product_group_name(self):
-        return PRODUCT_GROUP_MAP.get(self.product_group_no, "Unknown")
+        product_group = GLSProductGroup.objects.filter(
+            product_group_no=self.product_group_no
+        ).first()
+        if product_group:
+            return product_group.product_group_name
+        return "Unknown"
 
     @property
     def manufacturer_name(self):
@@ -204,13 +220,13 @@ class GLSPriceList(Model):
     )
     article_no = CharField(max_length=50, unique=True)
     purchase_price = CleanDecimalField(
-        max_digits=14, decimal_places=4, null=True, blank=True
+        max_digits=14, decimal_places=2, null=True, blank=True
     )
     bill_back_price = CleanDecimalField(
-        max_digits=14, decimal_places=4, null=True, blank=True
+        max_digits=14, decimal_places=2, null=True, blank=True
     )
     recommended_retail_price = CleanDecimalField(
-        max_digits=14, decimal_places=4, null=True, blank=True
+        max_digits=14, decimal_places=2, null=True, blank=True
     )
     last_fetch_from_gls = DateTimeField(
         verbose_name="Last Fetched from GLS",
@@ -459,6 +475,20 @@ class GLSPromotionPrice(Model):
         auto_now=True,
     )
 
+    @property
+    def short_text(self):
+        header = GLSPromotionHeader.objects.filter(action_code=self.action_code).first()
+        if header:
+            return header.short_text
+        return "N/A"
+
+    @property
+    def article_name(self):
+        master_data = GLSMasterData.objects.filter(article_no=self.article_no).first()
+        if master_data:
+            return master_data.description
+        return "N/A"
+
     class Meta:
         verbose_name = "GLS Promotion Price 503"
         verbose_name_plural = "GLS Promotion Prices 503"
@@ -621,3 +651,32 @@ class GLSOrderStatus(Model):
 
     def __str__(self):
         return f" Order-No: {self.order_number or ''}"
+
+
+class GLSHandlingSurcharge(Model):
+    PERCENT = "percent"
+    ABSOLUTE = "absolute"
+
+    FEE_TYPE_CHOICES = [
+        (PERCENT, "Percent"),
+        (ABSOLUTE, "Absolute"),
+    ]
+
+    article_group_no = CharField(max_length=10, unique=True)
+    article_group_name = CharField(max_length=100, null=True, blank=True)
+    fee_type = models.CharField(
+        max_length=10, choices=FEE_TYPE_CHOICES, default=PERCENT
+    )
+    value = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        verbose_name_plural = "GLS Handling Surcharge"
+
+    def __str__(self):
+        return self.article_group_no
+
+    @property
+    def normalised_value(self):
+        if self.fee_type == self.PERCENT:
+            return self.value / Decimal(100)
+        return self.value

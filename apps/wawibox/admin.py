@@ -2,15 +2,12 @@ from django.contrib import admin
 from .models import (
     WawiboxProduct,
     WawiboxCompetitorPrice,
-    WawiboxProductUpdate,
+    WawiboxExport,
     WawiboxOrder,
     WawiboxOrderItem,
 )
 
 
-# -----------------------------------------------------
-# Wawibox Master Data
-# -----------------------------------------------------
 @admin.register(WawiboxProduct)
 class WawiboxProductAdmin(admin.ModelAdmin):
     list_display = (
@@ -104,9 +101,6 @@ class WawiboxProductAdmin(admin.ModelAdmin):
         return False
 
 
-# -----------------------------------------------------
-# Wawibox Competitor Price
-# -----------------------------------------------------
 @admin.register(WawiboxCompetitorPrice)
 class WawiboxCompetitorPriceAdmin(admin.ModelAdmin):
     list_display = (
@@ -205,39 +199,32 @@ class WawiboxCompetitorPriceAdmin(admin.ModelAdmin):
         return False
 
 
-# # -----------------------------------------------------
-# # Wawibox Product Data
-# # -----------------------------------------------------
-# @admin.register(WawiboxProductUpdate)
-# class WawiboxProductUpdateAdmin(admin.ModelAdmin):
-#     list_display = (
-#         "internal_number",
-#         "manufacturer_article_no",
-#         "manufacturer_name",
-#         "name",
-#         "price",
-#         "is_available",
-#     )
-#     search_fields = (
-#         "internal_number",
-#         "manufacturer_article_no",
-#         "name",
-#         "manufacturer_name",
-#     )
+@admin.register(WawiboxExport)
+class WawiboxExportAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "internal_number",
+        "manufacturer_article_no",
+        "sales_price",
+        "updated_at",
+        "last_pushed_to_wawibox",
+    )
+    search_fields = (
+        "name",
+        "internal_number",
+        "manufacturer_article_no",
+    )
 
-#     def has_add_permission(self, r, o=None):
-#         return False
+    def has_add_permission(self, r, o=None):
+        return False
 
-#     def has_change_permission(self, r, o=None):
-#         return False
+    def has_change_permission(self, r, o=None):
+        return False
 
-#     def has_delete_permission(self, r, o=None):
-#         return False
+    def has_delete_permission(self, r, o=None):
+        return False
 
 
-# # -----------------------------------------------------
-# # Inline for Order Items
-# # -----------------------------------------------------
 # class WawiboxOrderItemInline(admin.TabularInline):
 #     model = WawiboxOrderItem
 #     extra = 0
@@ -246,9 +233,6 @@ class WawiboxCompetitorPriceAdmin(admin.ModelAdmin):
 #     readonly_fields = [f.name for f in WawiboxOrderItem._meta.fields]
 
 
-# # -----------------------------------------------------
-# # Wawibox Order
-# # -----------------------------------------------------
 # @admin.register(WawiboxOrder)
 # class WawiboxOrderAdmin(admin.ModelAdmin):
 #     list_display = (
@@ -274,9 +258,6 @@ class WawiboxCompetitorPriceAdmin(admin.ModelAdmin):
 #         return False
 
 
-# # -----------------------------------------------------
-# # Wawibox Order Item (direct admin)
-# # -----------------------------------------------------
 # @admin.register(WawiboxOrderItem)
 # class WawiboxOrderItemAdmin(admin.ModelAdmin):
 #     list_display = (

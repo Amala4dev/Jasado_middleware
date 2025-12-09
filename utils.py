@@ -1,35 +1,29 @@
-import paramiko
-import stat
-import csv
-from contextlib import contextmanager
-from django.apps import apps
-from django.utils import timezone
-from datetime import datetime
-from django.db.models import DecimalField
-from decimal import Decimal
-from django.db import transaction
-from babel.numbers import parse_decimal
-from django.template.loader import render_to_string
-from django.core.mail import EmailMessage
-import csv
-from django.db.models import Model
-from io import BytesIO
-from io import StringIO
 import os
-from ftplib import FTP_TLS
 import stat
-from django.utils.timezone import is_aware, make_naive
-import re
-from apps.gls.mapping import field_map_101
-from apps.gls.mapping import field_map_102
+import csv
+from datetime import datetime
+from io import BytesIO, StringIO
+from ftplib import FTP_TLS
+from contextlib import contextmanager
+import shutil
+import time
+
+import paramiko
+import openpyxl
+from babel.numbers import parse_decimal
+
 from django.conf import settings
 from django.apps import apps
-from django.http import HttpResponse
-import openpyxl
-from django.db.models import ForeignKey
+from django.db import transaction
+from django.db.models import Model, DecimalField
+from django.template.loader import render_to_string
+from django.core.mail import EmailMessage
+from django.utils import timezone
+from django.utils.timezone import is_aware, make_naive
 
-GLS_UPLOAD_PATH = settings.GLS_UPLOAD_PATH
+
 ADMIN_EMAIL = settings.ADMIN_EMAIL
+PENDING_DELETION_PATH = settings.PENDING_DELETION_PATH
 
 
 class CleanDecimalField(DecimalField):
@@ -255,18 +249,6 @@ def parse_ftp_file_to_model(
 
 
 def export_model_data(config: dict):
-    """
-    Export Django model data to CSV or Excel and trigger download.
-
-    config = {
-        "file_type": "csv" or "excel",
-        "model_label": "app_label.ModelName",
-        "display_name": "GLS Master Data",
-        "exclude_fields": ["id", "created_at"],
-        "delimiter": ",",  # for CSV
-        "raw_kwargs": {"id__in": [1, 2, 3]},
-    }
-    """
     file_type = config.get("file_type", "csv").lower()
     model_label = config["model_label"]
     exclude_fields = config.get("exclude_fields", ["id", "pk"])
@@ -276,41 +258,65 @@ def export_model_data(config: dict):
     model = apps.get_model(model_label)
     qs = model.objects.filter(**raw_kwargs)
 
-    fields = [
-        f.name
-        for f in model._meta.get_fields()
+    model_fields = [
+        f
+        for f in model._meta.fields
         if f.concrete and not f.many_to_many and f.name not in exclude_fields
     ]
-    fields += [p for p in dir(model) if isinstance(getattr(model, p), property)]
+    model_field_names = [f.name for f in model_fields]
+
+    property_fields = [
+        name
+        for name, obj in model.__dict__.items()
+        if isinstance(obj, property) and name not in exclude_fields
+    ]
+
+    field_names = model_field_names + property_fields
+
+    header_labels = []
+
+    for f in model_fields:
+        header_labels.append(f.verbose_name)
+
+    for p in property_fields:
+        attr = getattr(model, p)
+        if hasattr(attr.fget, "label"):
+            header_labels.append(attr.fget.label)
+
+        else:
+            header_labels.append(p.replace("_", " ").title())
 
     if file_type == "csv":
         buffer = StringIO()
         writer = csv.writer(buffer, delimiter=delimiter)
-        writer.writerow(fields)
+        writer.writerow(header_labels)
+
         for obj in qs:
-            writer.writerow([getattr(obj, f) for f in fields])
+            writer.writerow([getattr(obj, f) for f in field_names])
+
         return buffer.getvalue().encode("utf-8")
 
     elif file_type == "excel":
         wb = openpyxl.Workbook()
         ws = wb.active
-        header = [
-            f.verbose_name.title()
-            for f in model._meta.fields
-            if f.name not in exclude_fields
-        ]
-        ws.append(header)
+
+        ws.append(header_labels)
 
         for obj in qs:
             row = []
-            for f in fields:
+            for f in field_names:
                 value = getattr(obj, f)
+
                 if isinstance(value, datetime) and is_aware(value):
                     value = make_naive(value)
+
                 if isinstance(value, Model):
                     value = str(value)
+
                 row.append(value)
+
             ws.append(row)
+
         output = BytesIO()
         wb.save(output)
         return output.getvalue()
@@ -375,3 +381,29 @@ def delete_all_files(path):
         full = os.path.join(path, f)
         if os.path.isfile(full):
             os.remove(full)
+
+
+def move_all_files(src_path, dst_path):
+    os.makedirs(dst_path, exist_ok=True)
+
+    for f in os.listdir(src_path):
+        full_src = os.path.join(src_path, f)
+        full_dst = os.path.join(dst_path, f)
+
+        if os.path.isfile(full_src):
+            shutil.move(full_src, full_dst)
+
+
+def delete_old_files(days, base_path=PENDING_DELETION_PATH):
+
+    if not os.path.isdir(base_path):
+        return
+
+    cutoff = time.time() - (days * 24 * 60 * 60)
+
+    for filename in os.listdir(base_path):
+        file_path = os.path.join(base_path, filename)
+
+        if os.path.isfile(file_path):
+            if os.path.getmtime(file_path) < cutoff:
+                os.remove(file_path)

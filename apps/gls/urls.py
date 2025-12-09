@@ -9,4 +9,9 @@ urlpatterns = [
         views.export_master_data,
         name="export_master_data",
     ),
+    path(
+        "import/product-group/",
+        views.upload_product_group,
+        name="upload_product_group",
+    ),
 ]

@@ -5,19 +5,20 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.views.decorators.http import require_POST
 from django.conf import settings
 from django.urls import reverse
-from datetime import datetime
-from django.db import transaction
 from django.utils.timezone import now
 from utils import (
     ftp_connection,
     parse_ftp_file_to_model,
     send_email,
     validate_field_maps,
-    delete_all_files,
+    move_all_files,
 )
 from .utils import (
     GlsLog,
     export_gls_orders_to_csv,
+    upload_product_group_to_db,
+    validate_file_and_extract_rows,
+    FILE_PRODUCT_GROUP,
 )
 from django.http import JsonResponse, HttpResponse
 from apps.core.models import TaskStatus, ExportTask
@@ -37,33 +38,31 @@ GLS_FTP_PORT = settings.GLS_FTP_PORT
 GLS_FTP_PATH_OUTGOING = settings.GLS_FTP_PATH_OUTGOING
 GLS_FTP_PATH_INCOMING = settings.GLS_FTP_PATH_INCOMING
 GLS_DOWNLOAD_PATH = settings.GLS_DOWNLOAD_PATH
+PENDING_DELETION_PATH = settings.PENDING_DELETION_PATH
 GLS_DOWNLOAD_FILES_EXT = settings.GLS_DOWNLOAD_FILES_EXT
 
 
 def download_gls_files():
     is_completed = False
     try:
-        # should_run = TaskStatus.should_run(TaskStatus.DOWNLOAD_FILES_GLS)
-        should_run = 1
-        if should_run:
-            with ftp_connection(
-                GLS_FTP_HOST, GLS_FTP_USER, GLS_FTP_PASSWORD, port=GLS_FTP_PORT
-            ) as ftp:
-                file_attrs = [
-                    f
-                    for f in ftp.sftp.listdir_attr()
-                    if f.filename.endswith(tuple(GLS_DOWNLOAD_FILES_EXT))
-                ]
-                for f in file_attrs:
-                    filename = f.filename
-                    local_path = os.path.join(GLS_DOWNLOAD_PATH, filename)
-                    ftp.download_file(filename, local_path)
-                    # preserve GLS modified time
-                    os.utime(local_path, (f.st_mtime, f.st_mtime))
-                    GlsLog.info(f"Downloaded file {filename} successfully")
+        with ftp_connection(
+            GLS_FTP_HOST, GLS_FTP_USER, GLS_FTP_PASSWORD, port=GLS_FTP_PORT
+        ) as ftp:
+            file_attrs = [
+                f
+                for f in ftp.sftp.listdir_attr()
+                if f.filename.endswith(tuple(GLS_DOWNLOAD_FILES_EXT))
+            ]
+            for f in file_attrs:
+                filename = f.filename
+                local_path = os.path.join(GLS_DOWNLOAD_PATH, filename)
+                ftp.download_file(filename, local_path)
+                # preserve GLS modified time
+                os.utime(local_path, (f.st_mtime, f.st_mtime))
+                GlsLog.info(f"Downloaded file {filename} successfully")
 
-            TaskStatus.set_success(TaskStatus.DOWNLOAD_FILES_GLS)
-            is_completed = True
+        TaskStatus.set_success(TaskStatus.DOWNLOAD_FILES_GLS)
+        is_completed = True
     except Exception as e:
         TaskStatus.set_failure(TaskStatus.DOWNLOAD_FILES_GLS)
         GlsLog.error(f"Failed to download files from GLS:  {e}")
@@ -152,10 +151,8 @@ def parse_gls_file_data():
             GlsLog.error(e)
         return False
 
-    # should_run = TaskStatus.should_run(TaskStatus.PARSE_DOWNLOADED_FILES_GLS)
-    should_run = 1
     all_ok = False
-    if status and should_run:
+    if status:
         all_ok = True
         filenames = [
             f
@@ -188,7 +185,7 @@ def parse_gls_file_data():
                 GlsLog.error(f"Failed to update db from file {filename}: {e}")
 
         if all_ok:
-            delete_all_files(GLS_DOWNLOAD_PATH)
+            move_all_files(GLS_DOWNLOAD_PATH, PENDING_DELETION_PATH)
             TaskStatus.set_success(TaskStatus.PARSE_DOWNLOADED_FILES_GLS)
         else:
             TaskStatus.set_failure(TaskStatus.PARSE_DOWNLOADED_FILES_GLS)
@@ -197,22 +194,20 @@ def parse_gls_file_data():
 
 
 def push_dropshipping_orders_to_gls():
-    should_run = TaskStatus.should_run(TaskStatus.UPLOAD_ORDERS_GLS)
-    if should_run:
-        all_ok = True
-        new_order_headers = GLSOrderHeader.objects.filter(is_processed=False)
-        for order_header in new_order_headers:
-            is_uploaded = upload_gls_orders(order_header)
-            if is_uploaded:
-                new_order_headers.is_processed = True
-                new_order_headers.save()
-            else:
-                all_ok = False
-
-        if all_ok:
-            TaskStatus.set_success(TaskStatus.UPLOAD_ORDERS_GLS)
+    all_ok = True
+    new_order_headers = GLSOrderHeader.objects.filter(is_processed=False)
+    for order_header in new_order_headers:
+        is_uploaded = upload_gls_orders(order_header)
+        if is_uploaded:
+            new_order_headers.is_processed = True
+            new_order_headers.save()
         else:
-            TaskStatus.set_failure(TaskStatus.UPLOAD_ORDERS_GLS)
+            all_ok = False
+
+    if all_ok:
+        TaskStatus.set_success(TaskStatus.UPLOAD_ORDERS_GLS)
+    else:
+        TaskStatus.set_failure(TaskStatus.UPLOAD_ORDERS_GLS)
 
 
 def fetch_gls_order_feedback():
@@ -241,6 +236,8 @@ def fetch_gls_order_feedback():
             feedback.save()
 
         GlsLog.info(f"{new_feedbacks.count()} order feedbacks processed.")
+        return True
+    return False
 
 
 def handle_item_qty(feedback):
@@ -606,10 +603,37 @@ def export_master_data(request):
     return redirect(changelist_url)
 
 
+@staff_member_required
+@require_POST
+def upload_product_group(request):
+    uploaded_file = request.FILES.get("file")
+    changelist_url = reverse("admin:gls_glsproductgroup_changelist")
+
+    if not uploaded_file:
+        messages.error(request, "Please choose a .xlsx file.")
+        return redirect(changelist_url)
+
+    try:
+        rows = validate_file_and_extract_rows(uploaded_file, FILE_PRODUCT_GROUP)
+        upload_status = upload_product_group_to_db(rows)
+    except ValueError as err:
+        messages.error(request, str(err))
+        return redirect(changelist_url)
+    except Exception as err:
+        messages.error(request, f"Import failed: {err}")
+        return redirect(changelist_url)
+
+    filename = getattr(uploaded_file, "name", "")
+    messages.success(
+        request, f"Imported {upload_status.get('total', 0)} rows from “{filename}”."
+    )
+    return redirect(changelist_url)
+
+
 def index(request):
     # data = download_gls_files()
-    # data = parse_gls_file_data()
-    data = notify_cancelled_orders()
+    data = parse_gls_file_data()
+    # data = notify_cancelled_orders()
     # data = notify_cancelled_orders()
     # return HttpResponse(data)
     return JsonResponse(data, safe=False)

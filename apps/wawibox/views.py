@@ -1,21 +1,6 @@
 import os
-from django.shortcuts import render, redirect
-from django.contrib import messages
-from django.contrib.admin.views.decorators import staff_member_required
-from django.views.decorators.http import require_POST
 from django.conf import settings
-from django.urls import reverse
-from datetime import datetime
-from types import SimpleNamespace
-import time
-import os
-import re
-import datetime
-import os
-from django.utils import timezone
-from django.db import transaction
-from django.utils.timezone import now
-from decimal import Decimal
+
 from utils import (
     ftps_connection,
     parse_ftp_file_to_model,
@@ -32,19 +17,10 @@ from django.http import JsonResponse, HttpResponse
 from apps.core.models import (
     TaskStatus,
     ExportTask,
-    BlockedProduct,
-    AdditionalMasterData,
-    DynamicPrice,
-)
-from apps.gls.models import (
-    GLSMasterData,
-    GLSStockLevel,
 )
 from .mapping import WAWIBOX_DATA_FIELD_MAPS
 from .models import (
-    WawiboxProduct,
-    WawiboxCompetitorPrice,
-    WawiboxProductUpdate,
+    WawiboxExport,
 )
 
 # Constants
@@ -62,49 +38,46 @@ def download_wawibox_files():
     is_completed = False
 
     try:
-        # should_run = TaskStatus.should_run(TaskStatus.DOWNLOAD_FILES_WAWIBOX)
-        should_run = 1
-        if should_run:
-            with ftps_connection(
-                WAWIBOX_FTP_HOST,
-                WAWIBOX_FTP_USER,
-                WAWIBOX_FTP_PASSWORD,
-                port=WAWIBOX_FTP_PORT,
-            ) as ftp:
+        with ftps_connection(
+            WAWIBOX_FTP_HOST,
+            WAWIBOX_FTP_USER,
+            WAWIBOX_FTP_PASSWORD,
+            port=WAWIBOX_FTP_PORT,
+        ) as ftp:
 
-                ftp.change_dir(WAWIBOX_FTP_PATH_DOWNLOADS)
+            ftp.change_dir(WAWIBOX_FTP_PATH_DOWNLOADS)
 
-                raw_lines = []
-                ftp.ftps.retrlines("LIST", raw_lines.append)
+            raw_lines = []
+            ftp.ftps.retrlines("LIST", raw_lines.append)
 
-                filenames = [line.split()[-1] for line in raw_lines]
-                file_name_patterns = tuple(
-                    p.lower() for p in WAWIBOX_DOWNLOAD_FILES_PATTERNS
-                )
+            filenames = [line.split()[-1] for line in raw_lines]
+            file_name_patterns = tuple(
+                p.lower() for p in WAWIBOX_DOWNLOAD_FILES_PATTERNS
+            )
 
-                for pattern in file_name_patterns:
-                    dated_files = []
+            for pattern in file_name_patterns:
+                dated_files = []
 
-                    for fn in filenames:
-                        if fn.lower().startswith(pattern) or fn.lower().endswith(
-                            pattern + ".csv"
-                        ):
-                            dt = extract_date_from_wawibox_filename(fn)
-                            if dt:
-                                dated_files.append((fn, dt))
+                for fn in filenames:
+                    if fn.lower().startswith(pattern) or fn.lower().endswith(
+                        pattern + ".csv"
+                    ):
+                        dt = extract_date_from_wawibox_filename(fn)
+                        if dt:
+                            dated_files.append((fn, dt))
 
-                    if dated_files:
-                        latest_file = max(dated_files, key=lambda x: x[1])[0]
+                if dated_files:
+                    latest_file = max(dated_files, key=lambda x: x[1])[0]
 
-                        local_path = os.path.join(WAWIBOX_DOWNLOAD_PATH, latest_file)
-                        ftp.download_file(latest_file, local_path)
+                    local_path = os.path.join(WAWIBOX_DOWNLOAD_PATH, latest_file)
+                    ftp.download_file(latest_file, local_path)
 
-                        WawiBoxLog.info(
-                            f"Downloaded latest file {latest_file} successfully"
-                        )
+                    WawiBoxLog.info(
+                        f"Downloaded latest file {latest_file} successfully"
+                    )
 
-                is_completed = True
-                TaskStatus.set_success(TaskStatus.DOWNLOAD_FILES_WAWIBOX)
+            is_completed = True
+            TaskStatus.set_success(TaskStatus.DOWNLOAD_FILES_WAWIBOX)
 
     except Exception as e:
         TaskStatus.set_failure(TaskStatus.DOWNLOAD_FILES_WAWIBOX)
@@ -120,10 +93,8 @@ def parse_wawibox_file_data():
             WawiBoxLog.error(e)
         return False
 
-    # should_run = TaskStatus.should_run(TaskStatus.PARSE_DOWNLOADED_FILES_WAWIBOX)
-    should_run = 1
     is_completed = False
-    if status and should_run:
+    if status:
         is_completed = True
 
         file_name_patterns = tuple(p.lower() for p in WAWIBOX_DOWNLOAD_FILES_PATTERNS)
@@ -174,86 +145,7 @@ def parse_wawibox_file_data():
     return is_completed
 
 
-@transaction.atomic
-def _prepare_wawibox_data():
-    all_ok = True
-
-    try:
-        blocked_articles = set(
-            BlockedProduct.objects.values_list("article_no", flat=True)
-        )
-        stock_map = {s.article_no: s.inventory for s in GLSStockLevel.objects.all()}
-        calculated_price = {
-            s.article_no: s.calculated_sales_price for s in DynamicPrice.objects.all()
-        }
-        now = timezone.now()
-
-        instances = []
-
-        # --- GLS Master Data ---
-        master_data = GLSMasterData.objects.exclude(article_no__in=blocked_articles)
-        for data in master_data:
-            stock = stock_map.get(data.article_no, Decimal("0"))
-            availability_type_id = 1 if stock > 0 else 0
-            different_delivery_time = 3 if stock > 0 else 14
-
-            instances.append(
-                WawiboxProductUpdate(
-                    manufacturer_article_no=data.manufacturer_article_no,
-                    manufacturer_name=data.manufacturer_name,
-                    internal_number=data.article_no,
-                    name=data.description,
-                    is_available=availability_type_id,
-                    delivery_time=different_delivery_time,
-                    order_number=None,  # todo
-                    price=calculated_price[data.article_no],
-                    updated_at=now,
-                )
-            )
-
-        # --- Additional Products ---
-        additional_products = AdditionalMasterData.objects.exclude(
-            article_no__in=blocked_articles
-        )
-        for data in additional_products:
-            stock = stock_map.get(data.article_no, Decimal("0"))
-            availability_type_id = 1 if stock > 0 else 2
-            different_delivery_time = 3 if stock > 0 else 14
-
-            instances.append(
-                WawiboxProductUpdate(
-                    manufacturer_article_no=data.manufacturer_article_no,
-                    manufacturer_name=data.manufacturer_name,
-                    internal_number=data.article_no,
-                    name=data.description,
-                    is_available=availability_type_id,
-                    delivery_time=different_delivery_time,
-                    order_number=None,  # todo
-                    price=calculated_price[data.article_no],
-                    updated_at=now,
-                )
-            )
-
-        WawiboxProductUpdate.objects.all().delete()
-        WawiboxProductUpdate.objects.bulk_create(instances, batch_size=500)
-
-        WawiBoxLog.info("Data for transfer prepared successfully")
-    except Exception as e:
-        all_ok = False
-        WawiBoxLog.error(f"Failed to prepare data for transfer: {str(e)}")
-
-    if all_ok:
-        TaskStatus.set_success(TaskStatus.PREPARE_DATA_WAWIBOX)
-    else:
-        TaskStatus.set_failure(TaskStatus.PREPARE_DATA_WAWIBOX)
-
-    return all_ok
-
-
 def push_wawibox_data():
-    wawibox_data_prepared = _prepare_wawibox_data()
-    if not wawibox_data_prepared:
-        return
 
     csv_files_data = export_wawibox_product_data_to_csv()
 
@@ -267,7 +159,7 @@ def push_wawibox_data():
         # ftp.change_dir(WAWIBOX_FTP_PATH_UPLOADS)
         try:
             ftp.upload_file(csv_path, csv_name)
-            WawiBoxLog.info(f"Uploaded product data file {csv_name} successfully")
+            WawiBoxLog.info(f"Uploaded product export file {csv_name} successfully")
             is_completed = True
         except Exception as e:
             is_completed = False

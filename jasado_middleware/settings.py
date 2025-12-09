@@ -12,7 +12,7 @@ ALLOWED_HOSTS = ["*"]
 if DEBUG:
     SITE_URL = "http://localhost:7000"  # no slash
 else:
-    SITE_URL = "http://localhost:7000"
+    SITE_URL = "http://collegiate.pythonanywhere.com"
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -99,6 +99,7 @@ DEFAULT_FROM_EMAIL = f'"Jasado Middleware" <{EMAIL_HOST_USER}>'
 # FTP FILES
 FTP_FILES_ROOT = os.path.join(BASE_DIR, "ftp_files")
 GLS_DOWNLOAD_PATH = os.path.join(FTP_FILES_ROOT, "gls", "downloads")
+PENDING_DELETION_PATH = os.path.join(FTP_FILES_ROOT, "to_be_deleted")
 GLS_UPLOAD_PATH = os.path.join(FTP_FILES_ROOT, "gls", "uploads")
 WAWIBOX_DOWNLOAD_PATH = os.path.join(FTP_FILES_ROOT, "wawibox", "downloads")
 WAWIBOX_UPLOAD_PATH = os.path.join(FTP_FILES_ROOT, "wawibox", "uploads")

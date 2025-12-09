@@ -1,0 +1,35 @@
+{% extends "admin/change_list.html" %}
+{% load i18n admin_urls static admin_list %}
+{% block content %}
+  <div id="content-main">
+    <div id="import-products" class="module" 
+         style="margin:20px 0; padding:20px; border:1px solid #ddd; border-radius:6px; background:#f9f9f9;">
+      <h2 style="margin-top:0; font-size:1.1rem; font-weight:600; color:#333;">
+        📂 {% trans "Import Product group (.xlsx)" %}
+      </h2>
+
+      <form action="{% url 'upload_product_group' %}" method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        <div style="margin:12px 0; padding:20px; border:2px dashed #bbb; border-radius:6px; 
+                    text-align:center; color:#555; background:#fff;">
+          <p style="margin:0 0 8px; font-size:0.9rem;">Choose a file and click the upload button</p>
+          <input type="file" name="file" accept=".xlsx" required style="margin-top:8px;"/>
+        </div>
+
+        <div class="submit-row" style="margin-top:16px;">
+          <button type="submit" class="button default" 
+                  style="padding:8px 18px; font-size:15px; background:#0BAFBF; color:#fff; border:none; border-radius:4px;">
+            {% trans "Upload" %}
+          </button>
+        </div>
+
+        <p class="help" style="margin-top:12px; font-size:0.85rem; color:#666;">
+          {% trans "Mandatory columns:" %}
+          <code>Code, Beschreibung</code>
+        </p>
+      </form>
+    </div>
+  </div>
+
+  {{ block.super }}
+{% endblock %}

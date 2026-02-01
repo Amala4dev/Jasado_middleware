@@ -13,20 +13,19 @@ from django.utils import timezone
 class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
-        # ids_synced = bootstrap_weclapp_ids()
-        # manu_ids_synced = bootstrap_manufacturer_weclapp_ids()
-        # custom_pos_synced = bootstrap_customs_position_weclapp_ids()
-        # category_ids_synced = bootstrap_article_category_weclapp_ids()
+        ids_synced = bootstrap_weclapp_ids()
+        manu_ids_synced = bootstrap_manufacturer_weclapp_ids()
+        custom_pos_synced = bootstrap_customs_position_weclapp_ids()
+        category_ids_synced = bootstrap_article_category_weclapp_ids()
 
-        # if all(
-        #     [
-        #         ids_synced,
-        #         manu_ids_synced,
-        #         custom_pos_synced,
-        #         category_ids_synced,
-        #     ]
-        # ):
-        if True:
+        if all(
+            [
+                ids_synced,
+                manu_ids_synced,
+                custom_pos_synced,
+                category_ids_synced,
+            ]
+        ):
             self.stdout.write(
                 self.style.WARNING(
                     f"Master data sync to Weclapp started {timezone.now()}"

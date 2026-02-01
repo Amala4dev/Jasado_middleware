@@ -189,14 +189,14 @@ def run_automations():
     create_dropshipping_orders()
     eprint("dropshipping orders created from weclapp", timezone.now())
 
-    push_dropshipping_orders_to_gls()
-    eprint("dropshipping orders pushed to gls", timezone.now())
+    # push_dropshipping_orders_to_gls()
+    # eprint("dropshipping orders pushed to gls", timezone.now())
 
     if gls_order_feedback_fetched:
         notify_cancelled_orders()
         eprint("notify_cancelled_orders", timezone.now())
-        sync_order_feedback_status()
-        eprint("synced_orders_to_weclapp", timezone.now())
+        # sync_order_feedback_status()
+        # eprint("synced_orders_to_weclapp", timezone.now())
 
     cleanup_logs(7)
     cleanup_exports(7)

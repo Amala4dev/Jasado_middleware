@@ -9,7 +9,10 @@ from django.db.models import DateField
 from django.db.models import IntegerField
 from django.db.models import DateTimeField
 from django.db.models import SET_NULL
-from utils import CleanDecimalField
+from utils import (
+    CleanDecimalField,
+    compute_hash,
+)
 from django.core.validators import MaxValueValidator
 from apps.core.models import Product
 from decimal import Decimal
@@ -65,6 +68,8 @@ class GLSSupplier(Model):
         help_text="Timestamp of the last data fetch from GLS",
         auto_now=True,
     )
+    row_hash = CharField(max_length=255, editable=False, null=True, blank=True)
+    weclapp_id = CharField(max_length=100, null=True, blank=True, db_index=True)
 
     class Meta:
         verbose_name = "GLS Supplier ls.320"
@@ -77,6 +82,7 @@ class GLSSupplier(Model):
 class GLSProductGroup(Model):
     product_group_no = CharField(max_length=20, unique=True)
     product_group_name = CharField(max_length=100, null=True, blank=True)
+    weclapp_id = CharField(max_length=100, null=True, blank=True)
     last_updated = DateTimeField(
         auto_now=True,
     )
@@ -107,7 +113,7 @@ class GLSMasterData(Model):
         max_digits=14, decimal_places=4, null=True, blank=True
     )
     alternative_article_no = CharField(max_length=50, blank=True, null=True)
-    customs_position = CharField(max_length=20, blank=True, null=True)
+    customs_position = CharField(max_length=20, db_index=True, blank=True, null=True)
     country_of_origin = CharField(max_length=20, blank=True, null=True)
     blocked = BooleanField(default=False)
     country_of_origin_alt = CharField(
@@ -154,6 +160,7 @@ class GLSMasterData(Model):
         help_text="Timestamp of the last data fetch from GLS",
         auto_now=True,
     )
+    row_hash = CharField(max_length=255, editable=False, null=True, blank=True)
 
     @property
     def article_group_name(self):
@@ -174,6 +181,27 @@ class GLSMasterData(Model):
         if supplier:
             return f"{supplier.name1 or ''} {supplier.name2 or ''}".strip() or "Unknown"
         return "Unknown"
+
+    @property
+    def manufacturer_weclapp_id(self):
+        supplier = GLSSupplier.objects.filter(supplier_no=self.manufacturer).first()
+        return supplier.weclapp_id if supplier else None
+
+    @property
+    def product_group_weclapp_id(self):
+        product_group = GLSProductGroup.objects.filter(
+            product_group_no=self.product_group_no
+        ).first()
+        return product_group.weclapp_id if product_group else None
+
+    @property
+    def customs_number_weclapp_id(self):
+        from apps.weclapp.models import CustomsPositionMap
+
+        mapping = CustomsPositionMap.objects.filter(
+            customs_number=self.customs_position
+        ).first()
+        return mapping.weclapp_id if mapping else None
 
     class Meta:
         verbose_name = "GLS Master Data as.316"
@@ -200,6 +228,7 @@ class GLSStockLevel(Model):
         help_text="Timestamp of the last data fetch from GLS",
         auto_now=True,
     )
+    row_hash = CharField(max_length=255, editable=False, null=True, blank=True)
 
     class Meta:
         verbose_name = "GLS Stock Level lb.315"
@@ -233,6 +262,7 @@ class GLSPriceList(Model):
         help_text="Timestamp of the last data fetch from GLS",
         auto_now=True,
     )
+    row_hash = CharField(max_length=255, editable=False, null=True, blank=True)
 
     class Meta:
         verbose_name = "GLS Price List pl.317"
@@ -371,6 +401,7 @@ class GLSPromotionHeader(Model):
         help_text="Timestamp of the last data fetch from GLS",
         auto_now=True,
     )
+    row_hash = CharField(max_length=255, editable=False, null=True, blank=True)
 
     class Meta:
         verbose_name = "GLS Promotion Header 501"
@@ -498,10 +529,10 @@ class GLSPromotionPrice(Model):
 
 
 class GLSOrderHeader(Model):
-    record_type = CharField(max_length=5, null=True, blank=True)  # Satzart
-    order_number = CharField(max_length=50, null=True, blank=True)  # Bestellnummer
-    branch_no = CharField(max_length=50, null=True, blank=True)  # Filiale (GLS account)
-    customer_id = CharField(max_length=50, null=True, blank=True)  # KundenID
+    record_type = CharField(max_length=5, default="K")
+    order_number = CharField(max_length=50, null=True, blank=True)
+    branch_no = CharField(max_length=50, null=True, blank=True)
+    customer_id = CharField(max_length=50, null=True, blank=True)
     end_customer_no = CharField(max_length=20, null=True, blank=True)
     billing_name = CharField(max_length=50, null=True, blank=True)
     billing_name2 = CharField(max_length=50, null=True, blank=True)
@@ -519,32 +550,34 @@ class GLSOrderHeader(Model):
     shipping_zip = CharField(max_length=20, null=True, blank=True)
     shipping_city = CharField(max_length=50, null=True, blank=True)
     shipping_country = CharField(max_length=20, null=True, blank=True)
-    distribution_key = CharField(max_length=5, null=True, blank=True)  # Lieferschein
-    document_type = CharField(max_length=5, null=True, blank=True)  # Lieferschein
+    distribution_key = CharField(max_length=5, default="07", null=True, blank=True)
+    document_type = CharField(max_length=5, default="LS", null=True, blank=True)
     copies = IntegerField(default=1, validators=[MaxValueValidator(99)])
     open_field = CharField(max_length=5, null=True, blank=True)
     message = CharField(max_length=100, null=True, blank=True)
-    carrier_code = CharField(max_length=5, null=True, blank=True)
+    carrier_code = CharField(max_length=5, default="20", null=True, blank=True)
     registration_code = CharField(max_length=50, null=True, blank=True)
     redelivery_method = IntegerField(
-        null=True, blank=True, validators=[MaxValueValidator(9)]
+        default=3, null=True, blank=True, validators=[MaxValueValidator(9)]
     )
-    order_type = IntegerField(null=True, blank=True, validators=[MaxValueValidator(9)])
+    order_type = IntegerField(
+        default=1, null=True, blank=True, validators=[MaxValueValidator(9)]
+    )
     delivery_date = DateField(blank=True, null=True)
     contact_person = CharField(max_length=50, null=True, blank=True)
     email_address = CharField(max_length=50, null=True, blank=True)
     phone_number = CharField(max_length=50, null=True, blank=True)
     discount_period = IntegerField(null=True, blank=True)
-    currency = CharField(max_length=5, null=True, blank=True)
+    currency = CharField(max_length=5, default="EUR", null=True, blank=True)
     show_price_on_ls = BooleanField(default=False)
     print_format = CharField(max_length=5, null=True, blank=True)
     vat_id = CharField(max_length=50, null=True, blank=True)
     export_country = CharField(max_length=20, null=True, blank=True)
-    is_processed = BooleanField(default=False)
-    header_uploaded = BooleanField(default=False)
-    header_renamed = BooleanField(default=False)
-    lines_uploaded = BooleanField(default=False)
-    lines_renamed = BooleanField(default=False)
+    is_processed = BooleanField("Sent to GLS", default=False)
+    header_uploaded = BooleanField(default=False, editable=False)
+    header_renamed = BooleanField(default=False, editable=False)
+    lines_uploaded = BooleanField(default=False, editable=False)
+    lines_renamed = BooleanField(default=False, editable=False)
 
     class Meta:
         verbose_name = "GLS Order Header 101"
@@ -556,13 +589,14 @@ class GLSOrderHeader(Model):
 
 class GLSOrderLine(Model):
     # GLS fields
-    record_type = CharField(max_length=5, null=True, blank=True)  # Satzart
+    record_type = CharField(max_length=5, default="Z")
     order_header = ForeignKey(
         GLSOrderHeader,
         on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name="lines",
+        editable=False,
     )
     order_number = CharField(
         max_length=50, null=True, blank=True, db_index=True
@@ -583,9 +617,10 @@ class GLSOrderLine(Model):
     class Meta:
         verbose_name = "GLS Order Line 102"
         verbose_name_plural = "GLS Order Line 102"
+        unique_together = ("order_number", "position")
 
     def __str__(self):
-        return f"{self.order_number} - {self.gls_article_no}"
+        return ""
 
 
 class GLSOrderStatusQuerySet(QuerySet):
@@ -594,10 +629,14 @@ class GLSOrderStatusQuerySet(QuerySet):
             status_info__iregex=r"STORNO|GESPERRT|AUSFUHR", admin_notified=False
         )
 
-    def new_updates(self):
-        return self.exclude(status_info__iregex=r"STORNO|GESPERRT|AUSFUHR").filter(
-            delivered_qty__gt=F("last_sent_qty")
-        )
+    def sync_to_weclapp(self):
+        return self.filter(
+            order_number__isnull=False,
+            control_number__isnull=False,
+            delivered_qty__gt=0,
+            position__isnull=False,
+            synced_to_weclapp=False,
+        ).exclude(status_info__iregex=r"STORNO|GESPERRT|AUSFUHR")
 
 
 class GLSOrderStatus(Model):
@@ -605,20 +644,19 @@ class GLSOrderStatus(Model):
         max_length=50, null=True, blank=True, db_index=True
     )  # Bestellnummer
     position = CharField(max_length=20, null=True, blank=True, db_index=True)
-    article_no = CharField(max_length=50, null=True, blank=True)
-    delivered = BooleanField(default=False, editable=False)
+    article_no = CharField(verbose_name="sku", max_length=50, null=True, blank=True)
+    delivered = BooleanField(verbose_name="Fully Delivered", default=False)
     delivered_qty = models.BigIntegerField(null=True, blank=True)
     planned_qty = models.BigIntegerField(null=True, blank=True)
     ordered_qty = models.BigIntegerField(null=True, blank=True)
-    last_sent_qty = models.BigIntegerField(default=0, null=True, blank=True)
     control_number = CharField(
         verbose_name="Delivery note/Invoice Number",
         max_length=100,
         null=True,
         blank=True,
     )
-    serial_number = CharField(max_length=100, null=True, blank=True)
-    batch_number = CharField(max_length=100, null=True, blank=True)
+    serial_number = CharField(max_length=100, default="N/A", null=True, blank=True)
+    batch_number = CharField(max_length=100, default="N/A", null=True, blank=True)
     siemens_process_no = CharField(max_length=100, null=True, blank=True)
     package_type = CharField(max_length=50, null=True, blank=True)
     number_of_package = CharField(max_length=50, null=True, blank=True)
@@ -638,8 +676,10 @@ class GLSOrderStatus(Model):
     expiry_date = CharField(max_length=50, blank=True, null=True)  # Versandinfo (6)
     backorder_text = CharField(max_length=200, blank=True, null=True)  # Rückstände (20)
     status_info = CharField(max_length=150, blank=True, null=True)  # Info (10)
-    admin_notified = BooleanField(default=False, editable=False)
+    admin_notified = BooleanField(default=False)
     objects = GLSOrderStatusQuerySet.as_manager()
+    synced_to_weclapp = BooleanField(default=False)
+    last_sent_hash = CharField(max_length=255, editable=False, null=True, blank=True)
     last_updated = DateTimeField(
         auto_now=True,
     )
@@ -651,6 +691,22 @@ class GLSOrderStatus(Model):
 
     def __str__(self):
         return f" Order-No: {self.order_number or ''}"
+
+    @property
+    def current_hash(self):
+        exclude_fields = {
+            "id",
+            "admin_notified",
+            "last_sent_hash",
+            "last_updated",
+        }
+
+        data = {
+            field.name: getattr(self, field.name)
+            for field in self._meta.fields
+            if field.name not in exclude_fields
+        }
+        return compute_hash(data)
 
 
 class GLSHandlingSurcharge(Model):

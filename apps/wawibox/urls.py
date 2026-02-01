@@ -3,5 +3,5 @@ from django.urls import path
 
 
 urlpatterns = [
-    path("wawi/", views.wawi, name="wawi"),
+    path("", views.wawi, name="wawibox"),
 ]

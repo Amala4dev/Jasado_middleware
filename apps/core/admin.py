@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils.formats import date_format
 from django.utils.safestring import mark_safe
 from .models import (
     LogEntry,
@@ -41,6 +42,7 @@ class CustomAppOrderAdminSite(admin.AdminSite):
             "AeraProduct": 1,
             "AeraCompetitorPrice": 2,
             "AeraExport": 3,
+            "AeraOrder": 4,
         }
 
         model_ordering_gls = {
@@ -56,6 +58,8 @@ class CustomAppOrderAdminSite(admin.AdminSite):
             "GLSOrderStatus": 10,
             "GLSHandlingSurcharge": 11,
             "GLSProductGroup": 12,
+            "GLSOrderHeader": 13,
+            "GLSOrderLine": 14,
         }
 
         model_ordering_wawibox = {
@@ -71,11 +75,13 @@ class CustomAppOrderAdminSite(admin.AdminSite):
 
         app_ordering = {
             "core": 1,
-            "aera": 2,
-            "gls": 3,
-            "wawibox": 4,
-            "weclapp": 5,
-            "auth": 6,
+            "gls": 2,
+            "aera": 3,
+            "dentalheld": 4,
+            "shopware": 5,
+            "wawibox": 6,
+            "weclapp": 7,
+            "auth": 8,
         }
         app_list.sort(key=lambda x: app_ordering.get(x["app_label"], 999))
         app_model_to_sort = {"core", "aera", "gls", "wawibox"}
@@ -142,15 +148,15 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = (
         "name",
         "sku",
-        "manufacturer_article_no",
         "gls_article_group_no",
-        "sales_price",
+        "aera_sales_price",
+        "wawibox_sales_price",
+        "has_gift_price",
         "is_blocked",
     )
 
     list_display_links = (
         "sku",
-        "manufacturer_article_no",
         "name",
     )
 
@@ -161,7 +167,7 @@ class ProductAdmin(admin.ModelAdmin):
         "manufacturer",
     )
 
-    readonly_fields = ("manufacturer_name",)
+    readonly_fields = ("manufacturer_name", "stock", "gtin")
 
     list_per_page = 50
 
@@ -323,11 +329,10 @@ class LogEntryAdmin(admin.ModelAdmin):
         return message_trunc
 
     def created_at_with_colour(self, obj):
+        value = date_format(obj.created_at, "DATETIME_FORMAT")
         if obj.level == LogEntry.ERROR:
-            return mark_safe(
-                '<span style="color: #f1571a;">{}</span>'.format(obj.created_at)
-            )
-        return obj.created_at
+            return mark_safe(f'<span style="color: #f1571a;">{value}</span>')
+        return value
 
     source_with_colour.short_description = "Source"
     level_with_colour.short_description = "Level"
@@ -340,7 +345,8 @@ class ProductPriceHistoryAdmin(admin.ModelAdmin):
     list_display = (
         "product__name",
         "product__sku",
-        "sales_price",
+        "aera_sales_price",
+        "wawibox_sales_price",
         "calculated_at",
     )
     search_fields = ("product__sku",)
@@ -361,8 +367,9 @@ class ProductGtinAdmin(admin.ModelAdmin):
         "article_no",
         "sku",
         "gtin",
+        "updated_at",
     )
-    search_fields = ("article_no", "sku", "gtin")
+    search_fields = ("article_no", "gtin")
 
     def has_add_permission(self, request):
         return False

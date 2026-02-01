@@ -58,33 +58,32 @@ def export_wawibox_product_data_to_csv(delimiter=";"):
     }
 
 
-def _format_wawibox_value(value, field_type):
+def _format_wawibox_value(value, ftype):
     if value in (None, ""):
         return ""
 
-    match = re.match(r"(\d+)?([a-zA-Z,/_]+)", field_type)
-    length = int(match.group(1)) if match.group(1) else None
-    ftype = match.group(2)
+    if ftype == "str":
+        return str(value).strip()
 
-    if ftype.endswith("c"):
-        value = str(value).strip().upper()
-    elif ftype.endswith("t"):
-        value = str(value).strip()
-    elif ftype == "d":
-        value = str(int(float(value))).replace(".", "").replace(",", "")
-    elif ftype == "d,":
-        value = str(value).replace(",", "").replace(".", ",")
-    elif ftype.startswith("TT"):
-        value = value.strftime("%d.%m.%y") if value else ""
-    elif ftype in ("J/N", "c_bool"):
-        value = "J" if value else "N"
-    else:
-        value = str(value)
+    if ftype == "bool_01":
+        return "1" if value else "0"
 
-    if length and not ftype.startswith("TT"):
-        value = value[:length]
+    if ftype == "int":
+        return str(int(value))
 
-    return value
+    if ftype == "int_012":
+        v = int(value)
+        if v not in (0, 1, 2):
+            raise ValueError("MwSt must be 0, 1, or 2")
+        return str(v)
+
+    if ftype == "decimal":
+        return f"{float(value):.2f}"
+
+    if ftype == "date_iso":
+        return value.strftime("%Y-%m-%d")
+
+    return str(value)
 
 
 def extract_date_from_wawibox_filename(filename):

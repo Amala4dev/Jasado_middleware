@@ -5,7 +5,9 @@ from django.db import models
 from django.db.models import Model
 from django.db.models import ForeignKey
 from django.db.models import CharField
+from django.db.models import DateField
 from django.db.models import BooleanField
+from django.db.models import IntegerField
 from django.db.models import JSONField
 from django.db.models import DateTimeField
 from django.db.models import TextField
@@ -45,48 +47,18 @@ class LogEntry(models.Model):
     def __str__(self):
         return f"[{self.source}] {self.level} - {self.message[:50]}"
 
+    def save(self, *args, **kwargs):
+        is_error = self.level == self.ERROR
+        super().save(*args, **kwargs)
+        if is_error:
+            from utils import send_email
 
-class TaskStatus(models.Model):
-    DOWNLOAD_FILES_GLS = "download_files_gls"
-    DOWNLOAD_FILES_WAWIBOX = "download_files_wawibox"
-    UPLOAD_ORDERS_GLS = "upload_orders_gls"
-    PARSE_DOWNLOADED_FILES_GLS = "parse_gls_file_data"
-    PARSE_DOWNLOADED_FILES_WAWIBOX = "parse_wawibox_file_data"
-    FETCH_PRICES_AERA = "fetch_prices_aera"
-    FETCH_PRICES_WAWIBOX = "fetch_prices_wawibox"
-    PREPARE_DATA_AERA = "prepare_data_aera"
-    PREPARE_DATA_WAWIBOX = "prepare_data_wawibox"
-    DATA_TRANSFER_AERA = "data_transfer_aera"
-    UPDATE_PRICES_AERA = "update_prices_aera"
-    FETCH_ORDERS_AERA = "fetch_orders_aera"
+            subject = "Error in Automation"
 
-    name = models.CharField(max_length=100, unique=True)
-    status = models.BooleanField(default=False)
-    last_run = models.DateTimeField(auto_now=True)
-
-    @classmethod
-    def should_run(cls, task_name):
-        task = cls.objects.filter(name=task_name).first()
-        if not task:
-            return True
-        now = timezone.now()
-        if not task.status:
-            return (now - task.last_run) >= timedelta(hours=4)
-        return task.last_run.date() != now.date()
-
-    @classmethod
-    def set_success(cls, task_name):
-        cls.objects.update_or_create(
-            name=task_name,
-            defaults={"status": True, "last_run": timezone.now()},
-        )
-
-    @classmethod
-    def set_failure(cls, task_name):
-        cls.objects.update_or_create(
-            name=task_name,
-            defaults={"status": False, "last_run": timezone.now()},
-        )
+            context = {
+                "message": self.message,
+            }
+            send_email(subject, context)
 
 
 class Product(Model):
@@ -107,22 +79,62 @@ class Product(Model):
     )
     supplier = CharField(max_length=255, default=SUPPLIER_GLS)
     sku = CharField(max_length=50, null=True, blank=True, unique=True, db_index=True)
+    weclapp_id = CharField(
+        max_length=100, null=True, blank=True, unique=True, db_index=True
+    )
+    weclapp_article_supply_source_id = CharField(
+        max_length=100, null=True, blank=True, db_index=True
+    )
     name = CharField(max_length=255, null=True, blank=True)
     manufacturer = CharField(max_length=255, editable=False, null=True, blank=True)
     manufacturer_id = CharField(max_length=255, editable=False, null=True, blank=True)
     gls_article_group_no = CharField(max_length=50, blank=True, null=True)
     description = TextField(null=True, blank=True)
-    sales_price = DecimalField(
+    aera_sales_price = DecimalField(
         max_digits=12,
-        help_text="Last calculated sales price",
-        null=True,
-        blank=True,
+        help_text="Last calculated Aera sales price",
+        default=0.0,
         decimal_places=2,
     )
+    wawibox_sales_price = DecimalField(
+        max_digits=12,
+        help_text="Last calculated Wawibox sales price",
+        default=0.0,
+        decimal_places=2,
+    )
+    aera_gift_sales_price = DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Aera Sales price when gift promotion applies",
+    )
+    wawibox_gift_sales_price = DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Wawibox Sales price when gift promotion applies",
+    )
+
+    gift_min_qty = IntegerField(
+        null=True,
+        blank=True,
+        help_text="Minimum quantity for gift price",
+    )
+
+    gift_paid_qty = IntegerField(null=True, blank=True)
+    gift_free_qty = IntegerField(null=True, blank=True)
+    gift_valid_from = DateField(blank=True, null=True)
+    gift_valid_until = DateField(blank=True, null=True)
+    gift_promo_code = CharField(max_length=50, null=True, blank=True)
+    gift_action_type = CharField(max_length=50, null=True, blank=True)
+    has_gift_price = BooleanField(default=False)
+
     store_refrigerated = BooleanField(default=False)
     created_at = DateTimeField(editable=False, auto_now_add=True)
     updated_at = DateTimeField(editable=False, auto_now=True)
-    is_blocked = BooleanField(default=True)
+    is_blocked = BooleanField(default=False)
 
     class Meta:
         unique_together = ("supplier", "supplier_article_no")
@@ -160,6 +172,39 @@ class Product(Model):
                 return f"{s.name1 or ''} {s.name2 or ''}".strip() or "Unknown"
 
         return "Unknown"
+
+    @property
+    def vat_rate(self):
+        master_data = self.gls_master_data.first()
+        if master_data:
+            vat_rate = master_data.vat_rate
+        else:
+            raise ValueError(
+                f"Product {self.sku} has no vat rate, perhaps it is not from GLS"
+            )
+        return vat_rate
+
+    @property
+    def stock(self):
+        from apps.gls.models import GLSStockLevel
+
+        if self.supplier == self.SUPPLIER_GLS:
+            level = GLSStockLevel.objects.filter(
+                article_no=self.supplier_article_no
+            ).first()
+            return float(level.inventory or 0) if level else 0.0
+
+        non_gls = self.additional_master_data.first()
+        return float(non_gls.stock or 0) if non_gls else 0.0
+
+    @property
+    def gtin(self):
+        gtin = (
+            ProductGtin.objects.filter(article_no=self.supplier_article_no)
+            .values_list("gtin", flat=True)
+            .first()
+        )
+        return gtin
 
 
 class AdditionalMasterData(Model):
@@ -240,6 +285,7 @@ class ProductGtin(Model):
     gtin = CharField(verbose_name="ean", max_length=200, null=True, blank=True)
     sku = CharField(max_length=200, db_index=True, null=True, blank=True)
     supplier = CharField(max_length=255, default=SUPPLIER_GLS, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         verbose_name_plural = "Product GTIN"
@@ -305,7 +351,6 @@ class ProductGtin(Model):
     product_safety_contact_phone_number.label = "product_safety_contact.phone_number"
     product_safety_contact_phone_number = property(product_safety_contact_phone_number)
 
-    @property
     def locale(self):
         s = self._supplier_obj()
         country = s.country if s else None
@@ -313,6 +358,9 @@ class ProductGtin(Model):
             return None
         country = country.strip()
         return f"{country.lower()}-{country.upper()}"
+
+    locale.label = "locale"
+    locale = property(locale)
 
 
 class ExportTask(Model):
@@ -389,7 +437,32 @@ class ProductPriceHistory(Model):
         Product, on_delete=models.CASCADE, related_name="price_history"
     )
 
-    sales_price = DecimalField(max_digits=12, decimal_places=2)
+    aera_sales_price = DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    wawibox_sales_price = DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    aera_gift_sales_price = DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    wawibox_gift_sales_price = DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    gift_min_qty = IntegerField(
+        null=True,
+        blank=True,
+    )
+    gift_paid_qty = IntegerField(null=True, blank=True)
+    gift_free_qty = IntegerField(null=True, blank=True)
+    gift_valid_from = DateField(blank=True, null=True)
+    gift_valid_until = DateField(blank=True, null=True)
     calculated_at = DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -401,4 +474,4 @@ class ProductPriceHistory(Model):
         verbose_name_plural = "Product Price History"
 
     def __str__(self):
-        return f"{self.product_id} → {self.sales_price} @ {self.calculated_at}"
+        return f"{self.product_id} → {self.aera_sales_price} @ {self.calculated_at}"

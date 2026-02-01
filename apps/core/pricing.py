@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 from django.db import transaction
+from collections import defaultdict
+import traceback
 
 from .utils import (
     CoreLog,
@@ -33,7 +35,6 @@ def get_product_ids_and_groups():
     """
     id_article_group_no_list = list(
         Product.objects.filter(
-            is_blocked=False,
             supplier=Product.SUPPLIER_GLS,
         ).values_list("id", "gls_article_group_no")
     )
@@ -46,17 +47,17 @@ def get_non_gls_product_ids():
     for all non gls products in the database.
     """
     id_list = list(
-        Product.objects.filter(
-            is_blocked=False, supplier=Product.SUPPLIER_NON_GLS
-        ).values_list("id", flat=True)
+        Product.objects.filter(supplier=Product.SUPPLIER_NON_GLS).values_list(
+            "id", flat=True
+        )
     )
     return id_list
 
 
 def fetch_gls_prices():
-    gls_price_list = GLSPriceList.objects.values_list("product_id", "purchase_price")
+    gls_price_list = GLSPriceList.objects.values_list("product_id", "bill_back_price")
     price_map = {
-        product_id: purchase_price for product_id, purchase_price in gls_price_list
+        product_id: bill_back_price for product_id, bill_back_price in gls_price_list
     }
     return price_map
 
@@ -139,13 +140,16 @@ def fetch_promotions():
         promo_price.setdefault(p.product_id, []).append(p)
 
     promo_pos = {}
+    blocked_action_codes = set()
     for p in GLSPromotionPosition.objects.all():
         promo_pos.setdefault(p.product_id, []).append(p)
+        if p.qty_editable in ("1", 1):
+            blocked_action_codes.add(p.action_code)
 
-    return headers, promo_price, promo_pos
+    return headers, promo_price, promo_pos, blocked_action_codes
 
 
-def compute_cogs(pid, gls_prices, headers, promo_price, promo_pos):
+def compute_cogs(pid, gls_prices, headers, promo_price):
     today = datetime.today().date()
 
     cogs = gls_prices.get(pid)
@@ -167,43 +171,69 @@ def compute_cogs(pid, gls_prices, headers, promo_price, promo_pos):
             valid = header.valid_from <= today <= header.valid_to
 
         # if 503 contains promotional_purchase_price always use it
-        if valid and p.promotional_purchase_price:
+        if valid and p.promotional_purchase_price and p.promotional_purchase_price > 0:
             return p.promotional_purchase_price
 
-    # ---------- 501 + 502 GIFT PROMOTIONS ----------
+    return cogs
+
+
+def compute_gift_info(pid, cogs, headers, promo_pos, blocked_action_codes):
+    today = datetime.today().date()
+
     promo_positions = promo_pos.get(pid, [])
 
     for pos in promo_positions:
-        header = headers.get(pos.action_code)
+        action_code = pos.action_code
+
+        if action_code in blocked_action_codes:
+            continue
+
+        header = headers.get(action_code)
         if not header:
             continue
 
-        if header.action_type in ["6", "06", "7", "07"]:
+        if header.action_type not in ["5", "05", "6", "06", "7", "07"]:
             continue
 
-        # must have valid date in header
-        valid = True
+        try:
+            if Decimal(header.natural_discount_qty) <= 0:
+                continue
+        except Exception:
+            CoreLog.error(
+                f"Sales prices calculation encountered an error, "
+                f"natural_discount_qty may have invalid value for {header.action_code}: "
+                f"{traceback.format_exc()}"
+            )
+            continue
+
         if header.valid_from and header.valid_to:
-            valid = header.valid_from <= today <= header.valid_to
+            if not (header.valid_from <= today <= header.valid_to):
+                continue
 
-        if valid and header.action_type in ["5", "05"]:
-            # gift promotion
-            free_qty = Decimal(header.natural_discount_qty or 0)
-            total_qty = Decimal(header.min_qty or 0)
+        free_qty = Decimal(header.natural_discount_qty or 0)
+        total_qty = Decimal(header.min_qty or 0)
 
-            if free_qty > 0 and total_qty > free_qty:
-                paid_qty = total_qty - free_qty
-                return (cogs * paid_qty) / total_qty
-
-    return cogs
+        if free_qty > 0 and total_qty > free_qty:
+            paid_qty = total_qty - free_qty
+            gift_cogs = (cogs * paid_qty) / total_qty
+            return {
+                "gift_cogs": gift_cogs,
+                "free_qty": int(free_qty),
+                "paid_qty": int(paid_qty),
+                "min_qty": int(total_qty),
+                "gift_valid_from": header.valid_from,
+                "gift_valid_until": header.valid_to,
+                "gift_promo_code": header.action_code,
+                "gift_action_type": header.action_type,
+            }
+    return None
 
 
 def compute_gls_sales_price(
     pid,
     handling_surcharge,
     cogs,
-    aera_comp_prices,
-    wawi_comp_prices,
+    competitor_prices,
     middleware_settings,
 ):
     if not cogs:
@@ -215,19 +245,17 @@ def compute_gls_sales_price(
 
     base_price = cogs * (1 + handling_surcharge) * (1 + min_margin)
 
-    competitor_prices = []
-    competitor_prices += aera_comp_prices.get(pid, [])
-    competitor_prices += wawi_comp_prices.get(pid, [])
+    product_competitor_prices = competitor_prices.get(pid, [])
 
-    if not competitor_prices:
+    if not product_competitor_prices:
         return base_price
 
-    competitor_prices.sort()
+    product_competitor_prices.sort()
 
     if competitor_rule == MiddlewareSetting.RULE_AVERAGE:
-        ref_price = sum(competitor_prices[:3]) / 3
+        ref_price = sum(product_competitor_prices[:3]) / 3
     else:
-        ref_price = competitor_prices[0]
+        ref_price = product_competitor_prices[0]
 
     top_comp = ref_price
 
@@ -240,8 +268,7 @@ def compute_gls_sales_price(
 def compute_non_gls_sales_price(
     pid,
     non_gls_price_list,
-    aera_comp_prices,
-    wawi_comp_prices,
+    competitor_prices,
     middleware_settings,
 ):
 
@@ -252,19 +279,17 @@ def compute_non_gls_sales_price(
 
     base_price = price_with_handling_fee * (1 + min_margin)
 
-    competitor_prices = []
-    competitor_prices += aera_comp_prices.get(pid, [])
-    competitor_prices += wawi_comp_prices.get(pid, [])
+    product_competitor_prices = competitor_prices.get(pid, [])
 
-    if not competitor_prices:
+    if not product_competitor_prices:
         return base_price
 
-    competitor_prices.sort()
+    product_competitor_prices.sort()
 
     if competitor_rule == MiddlewareSetting.RULE_AVERAGE:
-        ref_price = sum(competitor_prices[:3]) / 3
+        ref_price = sum(product_competitor_prices[:3]) / 3
     else:
-        ref_price = competitor_prices[0]
+        ref_price = product_competitor_prices[0]
 
     top_comp = ref_price
 
@@ -274,30 +299,104 @@ def compute_non_gls_sales_price(
     return top_comp - undercut
 
 
-def update_products(prices):
-    """prices = {product_id: sales_price}"""
-    ids = list(prices.keys())
+def update_products(prices, gift_updates):
+    """prices = {product_id: {aera: sales_price, wawibox: sales_price,}}"""
+    """gift_updates = {product_id: {aera: (gift_sp, min_qty), wawibox: (gift_sp, min_qty)}}"""
+    """gift_updates = {product_id: {aera_gift_sp: 2.1, wawibox_gift_sp: 2.2, min_qty: 4, gift_valid_from: 2026/01/05, gift_valid_until: 2026/04/05,}}"""
+    ids = list(set(prices.keys()) | set(gift_updates.keys()))
     BATCH = 500
 
     for i in range(0, len(ids), BATCH):
         chunk = ids[i : i + BATCH]
 
-        products = Product.objects.filter(id__in=chunk).only("id", "sales_price")
-
+        products = Product.objects.filter(id__in=chunk).only(
+            "id",
+            "aera_sales_price",
+            "wawibox_sales_price",
+            "aera_gift_sales_price",
+            "wawibox_gift_sales_price",
+            "gift_min_qty",
+            "gift_valid_from",
+            "gift_valid_until",
+            "has_gift_price",
+        )
         batch = []
         for p in products:
-            p.sales_price = prices[p.id]
+            if p.id in prices:
+                p.aera_sales_price = prices[p.id]["aera"]
+                p.wawibox_sales_price = prices[p.id]["wawibox"]
+
+            if p.id in gift_updates:
+                p.aera_gift_sales_price = gift_updates[p.id]["aera_gift_sp"]
+                p.wawibox_gift_sales_price = gift_updates[p.id]["wawibox_gift_sp"]
+                p.gift_min_qty = gift_updates[p.id]["min_qty"]
+                p.gift_free_qty = gift_updates[p.id]["free_qty"]
+                p.gift_paid_qty = gift_updates[p.id]["paid_qty"]
+                p.gift_valid_from = gift_updates[p.id]["gift_valid_from"]
+                p.gift_valid_until = gift_updates[p.id]["gift_valid_until"]
+                p.gift_promo_code = gift_updates[p.id]["gift_promo_code"]
+                p.gift_action_type = gift_updates[p.id]["gift_action_type"]
+                p.has_gift_price = True
+            else:
+                p.aera_gift_sales_price = None
+                p.wawibox_gift_sales_price = None
+                p.gift_min_qty = None
+                p.gift_free_qty = None
+                p.gift_paid_qty = None
+                p.gift_valid_from = None
+                p.gift_valid_until = None
+                p.gift_promo_code = None
+                p.gift_action_type = None
+                p.has_gift_price = False
+
             batch.append(p)
 
         if batch:
-            Product.objects.bulk_update(batch, ["sales_price"], batch_size=500)
+            Product.objects.bulk_update(
+                batch,
+                [
+                    "aera_sales_price",
+                    "wawibox_sales_price",
+                    "aera_gift_sales_price",
+                    "wawibox_gift_sales_price",
+                    "gift_min_qty",
+                    "gift_free_qty",
+                    "gift_paid_qty",
+                    "gift_valid_from",
+                    "gift_valid_until",
+                    "gift_promo_code",
+                    "gift_action_type",
+                    "has_gift_price",
+                ],
+                batch_size=BATCH,
+            )
 
 
-def save_price_history(prices):
-    objs = [
-        ProductPriceHistory(product_id=pid, sales_price=sp)
-        for pid, sp in prices.items()
-    ]
+def save_price_history(prices, gift_updates):
+    """prices = {product_id: {aera: sales_price, wawibox: sales_price,}}"""
+    """gift_updates = {product_id: {aera: (gift_sp, min_qty), wawibox: (gift_sp, min_qty)}}"""
+    """gift_updates = {product_id: {aera_gift_sp: 2.1, wawibox_gift_sp: 2.2, min_qty: 4, gift_valid_from: 2026/01/05, gift_valid_until: 2026/04/05,}}"""
+
+    objs = []
+
+    for pid, sp_dict in prices.items():
+        gift_dict = gift_updates.get(pid, {})
+
+        objs.append(
+            ProductPriceHistory(
+                product_id=pid,
+                aera_sales_price=sp_dict["aera"],
+                wawibox_sales_price=sp_dict["wawibox"],
+                aera_gift_sales_price=gift_dict.get("aera_gift_sp"),
+                wawibox_gift_sales_price=gift_dict.get("wawibox_gift_sp"),
+                gift_min_qty=gift_dict.get("min_qty"),
+                gift_free_qty=gift_dict.get("free_qty"),
+                gift_paid_qty=gift_dict.get("paid_qty"),
+                gift_valid_from=gift_dict.get("gift_valid_from"),
+                gift_valid_until=gift_dict.get("gift_valid_until"),
+            )
+        )
+
     ProductPriceHistory.objects.bulk_create(objs, batch_size=5000)
 
 
@@ -311,64 +410,104 @@ def run_pricing_engine():
         middleware_settings = MiddlewareSetting.objects.first()
         aera_comp_prices = fetch_aera_competitive_prices()
         wawi_comp_prices = fetch_wawibox_competitive_prices()
-        pid_sales_price_dict = {}
+
+        pid_sales_price_dict = defaultdict(dict)
+        gift_updates = defaultdict(dict)
 
         # Calculate for GLS products
         product_id_group_id = get_product_ids_and_groups()
         gls_price_list = fetch_gls_prices()
         gls_handling_surcharge = fetch_gls_handling_surcharge()
-        promo_headers, promo_price, promo_pos = fetch_promotions()
+        promo_headers, promo_price, promo_pos, blocked_action_codes = fetch_promotions()
 
         for pid, article_group_no in product_id_group_id:
-            cogs = compute_cogs(
-                pid, gls_price_list, promo_headers, promo_price, promo_pos
-            )
+            # Normal sales price
+            cogs = compute_cogs(pid, gls_price_list, promo_headers, promo_price)
             handling_surcharge = gls_handling_surcharge.get(article_group_no, 0)
-            sp = compute_gls_sales_price(
+            aera_sp = compute_gls_sales_price(
                 pid,
                 handling_surcharge,
                 cogs,
                 aera_comp_prices,
+                middleware_settings,
+            )
+            wawibox_sp = compute_gls_sales_price(
+                pid,
+                handling_surcharge,
+                cogs,
                 wawi_comp_prices,
                 middleware_settings,
             )
 
-            if sp:
-                pid_sales_price_dict[pid] = sp
+            if aera_sp or wawibox_sp:
+                pid_sales_price_dict[pid]["aera"] = aera_sp
+                pid_sales_price_dict[pid]["wawibox"] = wawibox_sp
+
+            # Gift sales price
+            gift_info = compute_gift_info(
+                pid,
+                cogs,
+                promo_headers,
+                promo_pos,
+                blocked_action_codes,
+            )
+            if gift_info:
+                aera_gift_sp = compute_gls_sales_price(
+                    pid,
+                    handling_surcharge,
+                    gift_info["gift_cogs"],
+                    aera_comp_prices,
+                    middleware_settings,
+                )
+                wawibox_gift_sp = compute_gls_sales_price(
+                    pid,
+                    handling_surcharge,
+                    gift_info["gift_cogs"],
+                    wawi_comp_prices,
+                    middleware_settings,
+                )
+
+                gift_updates[pid]["aera_gift_sp"] = aera_gift_sp
+                gift_updates[pid]["wawibox_gift_sp"] = wawibox_gift_sp
+                gift_updates[pid]["min_qty"] = gift_info["min_qty"]
+                gift_updates[pid]["free_qty"] = gift_info["free_qty"]
+                gift_updates[pid]["paid_qty"] = gift_info["paid_qty"]
+                gift_updates[pid]["gift_valid_from"] = gift_info["gift_valid_from"]
+                gift_updates[pid]["gift_valid_until"] = gift_info["gift_valid_until"]
+                gift_updates[pid]["gift_promo_code"] = gift_info["gift_promo_code"]
+                gift_updates[pid]["gift_action_type"] = gift_info["gift_action_type"]
 
         # Calculate for non GLS products
         product_ids = get_non_gls_product_ids()
         non_gls_price_list = fetch_non_gls_prices()
 
         for pid in product_ids:
-            sp = compute_non_gls_sales_price(
+            aera_sp = compute_non_gls_sales_price(
                 pid,
                 non_gls_price_list,
                 aera_comp_prices,
+                middleware_settings,
+            )
+
+            wawibox_sp = compute_non_gls_sales_price(
+                pid,
+                non_gls_price_list,
                 wawi_comp_prices,
                 middleware_settings,
             )
 
-            competitor_prices = []
-            competitor_prices += aera_comp_prices.get(pid, [])
-            competitor_prices += wawi_comp_prices.get(pid, [])
-            print(pid)
-            print(middleware_settings.competitor_rule)
-            print(middleware_settings.minimum_margin)
-            print(middleware_settings.undercut_value)
-            print("nelo")
-            print(competitor_prices)
-            print(sp)
-
-            if sp:
-                pid_sales_price_dict[pid] = sp
+            if aera_sp or wawibox_sp:
+                pid_sales_price_dict[pid]["aera"] = aera_sp
+                pid_sales_price_dict[pid]["wawibox"] = wawibox_sp
 
         with transaction.atomic():
-            update_products(pid_sales_price_dict)
-            save_price_history(pid_sales_price_dict)
+            update_products(pid_sales_price_dict, gift_updates)
+            save_price_history(pid_sales_price_dict, gift_updates)
             cleanup_history()
             CoreLog.info("Sales prices calculated successfully")
         return True
-    except Exception as e:
-        CoreLog.error(f"Sales prices calculation encountered an error: {str(e)}")
+    except Exception:
+        CoreLog.error(
+            f"Sales prices calculation encountered an error: {traceback.format_exc()}"
+        )
         return False

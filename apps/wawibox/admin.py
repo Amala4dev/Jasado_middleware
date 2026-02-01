@@ -15,8 +15,6 @@ class WawiboxProductAdmin(admin.ModelAdmin):
         "name",
         "manufacturer_name",
         "manufacturer_part_number",
-        "price",
-        "delivery_time",
     )
     search_fields = ("sku", "name", "manufacturer_part_number")
 
@@ -25,6 +23,7 @@ class WawiboxProductAdmin(admin.ModelAdmin):
             "Basic Info",
             {
                 "fields": (
+                    "product",
                     "sku",
                     "name",
                 )
@@ -38,56 +37,6 @@ class WawiboxProductAdmin(admin.ModelAdmin):
                     "manufacturer_part_number",
                 )
             },
-        ),
-        (
-            "Primary Pricing",
-            {
-                "fields": (
-                    "price",
-                    "delivery_time",
-                )
-            },
-        ),
-        (
-            "Tiered Pricing - Level 1",
-            {
-                "fields": (
-                    "min_order_qty",
-                    "min_order_qty_2",
-                    "price_2",
-                )
-            },
-        ),
-        (
-            "Tiered Pricing - Level 2",
-            {
-                "fields": (
-                    "min_order_qty_3",
-                    "price_3",
-                )
-            },
-        ),
-        (
-            "Tiered Pricing - Level 3",
-            {
-                "fields": (
-                    "min_order_qty_4",
-                    "price_4",
-                )
-            },
-        ),
-        (
-            "Tiered Pricing - Level 4",
-            {
-                "fields": (
-                    "min_order_qty_5",
-                    "price_5",
-                )
-            },
-        ),
-        (
-            "Date",
-            {"fields": ("last_fetch_from_wawibox",)},
         ),
     )
 

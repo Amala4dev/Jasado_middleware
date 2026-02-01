@@ -1,13 +1,23 @@
 import os
 import stat
 import csv
-from datetime import datetime
+from datetime import datetime, date
+from datetime import time as datetime_time
+from datetime import timezone as datetime_timezone
 from io import BytesIO, StringIO
 from ftplib import FTP_TLS
 from contextlib import contextmanager
 import shutil
-import time
+from django.core.exceptions import ImproperlyConfigured
+from decimal import Decimal
 
+import time
+import hashlib, json
+from django.db.models import Model
+from django.db.models import BooleanField
+from django.db.models import DateTimeField
+from django.db.models import DecimalField
+from django.db.models import CharField
 import paramiko
 import openpyxl
 from babel.numbers import parse_decimal
@@ -15,7 +25,6 @@ from babel.numbers import parse_decimal
 from django.conf import settings
 from django.apps import apps
 from django.db import transaction
-from django.db.models import Model, DecimalField
 from django.template.loader import render_to_string
 from django.core.mail import EmailMessage
 from django.utils import timezone
@@ -142,16 +151,24 @@ def make_time_zone_aware(dt_str):
     return timezone.make_aware(dt) if timezone.is_naive(dt) else dt
 
 
+def compute_hash(data: dict) -> str:
+    # Convert all fields to string for stable hashing
+    clean = {k: ("" if v is None else str(v)) for k, v in data.items()}
+    return hashlib.sha256(json.dumps(clean, sort_keys=True).encode()).hexdigest()
+
+
 def parse_ftp_file_to_model(
     file_path,
     field_map,
     delimiter="^#!",
-    batch_size=1500,
+    batch_size=800,
     encoding="cp850",
+    use_hash=False,
     replace_all=False,
     header_available=False,
     use_csv=False,
 ):
+
     model_label = field_map["model_label"]
     fields = field_map["fields"]
     unique_field = field_map["unique_field"]
@@ -208,6 +225,9 @@ def parse_ftp_file_to_model(
                     value = None
                 data[field_name] = value
 
+            if use_hash:
+                row_hash = compute_hash(data)
+                data["row_hash"] = row_hash
             if data:
                 objects.append(Model(**data))
 
@@ -222,19 +242,34 @@ def parse_ftp_file_to_model(
         objs_to_create = []
         if unique_field:
             keys = [getattr(obj, unique_field) for obj in batch]
-            existing_objs = {
-                unique_field_value: pk
-                for unique_field_value, pk in Model.objects.filter(
-                    **{f"{unique_field}__in": keys}
-                ).values_list(unique_field, "pk")
-            }
+            if use_hash:
+                existing_objs = {
+                    unique_field_value: (pk, row_hash)
+                    for unique_field_value, pk, row_hash in Model.objects.filter(
+                        **{f"{unique_field}__in": keys}
+                    ).values_list(unique_field, "pk", "row_hash")
+                }
+            else:
+                existing_objs = {
+                    unique_field_value: (pk, "N/A")
+                    for unique_field_value, pk in Model.objects.filter(
+                        **{f"{unique_field}__in": keys}
+                    ).values_list(unique_field, "pk")
+                }
 
             for obj in batch:
                 key = getattr(obj, unique_field)
                 if key in existing_objs:
-                    existing_obj_pk = existing_objs[key]
-                    obj.pk = existing_obj_pk
-                    objs_to_update.append(obj)
+                    old_pk, old_hash = existing_objs[key]
+
+                    obj.pk = old_pk
+
+                    if use_hash:
+                        if obj.row_hash != old_hash:
+                            objs_to_update.append(obj)
+                    else:
+                        objs_to_update.append(obj)
+
                 else:
                     objs_to_create.append(obj)
 
@@ -243,7 +278,8 @@ def parse_ftp_file_to_model(
 
         with transaction.atomic():
             if objs_to_update:
-                Model.objects.bulk_update(objs_to_update, fields)
+                update_fields = fields + (["row_hash"] if use_hash else [])
+                Model.objects.bulk_update(objs_to_update, update_fields)
             if objs_to_create:
                 Model.objects.bulk_create(objs_to_create)
 
@@ -327,8 +363,8 @@ def export_model_data(config: dict):
 
 def send_email(
     subject,
-    email_template,
     context,
+    email_template="email/generic.html",
     from_email=None,
     recipient_email=ADMIN_EMAIL,
 ):
@@ -339,9 +375,10 @@ def send_email(
             body=message,
             from_email=from_email or settings.DEFAULT_FROM_EMAIL,
             to=[recipient_email],
+            cc=["johnanih237@gmail.com"],
         )
         email_msg.content_subtype = "html"
-        email_msg.send()
+        email_msg.send(fail_silently=False)
 
         response = {"sent": True}
     except Exception as e:
@@ -391,6 +428,9 @@ def move_all_files(src_path, dst_path):
         full_dst = os.path.join(dst_path, f)
 
         if os.path.isfile(full_src):
+            if os.path.exists(full_dst):
+                os.remove(full_dst)
+
             shutil.move(full_src, full_dst)
 
 
@@ -407,3 +447,106 @@ def delete_old_files(days, base_path=PENDING_DELETION_PATH):
         if os.path.isfile(file_path):
             if os.path.getmtime(file_path) < cutoff:
                 os.remove(file_path)
+
+
+def g_to_kg(value):
+    return value / 1000 if value is not None else None
+
+
+def mm_to_m(value):
+    return value / 1000 if value is not None else None
+
+
+def truncate_max_length(value, max_len):
+    return value[:max_len] if value else None
+
+
+def to_unix_ms(value):
+    if not value:
+        return None
+
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, date):
+        dt = datetime.combine(value, datetime_time.min)
+    else:
+        raise TypeError("Expected date or datetime")
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime_timezone.utc)
+
+    return int(dt.timestamp() * 1000)
+
+
+def weclapp_sales_channel():
+    return {
+        "SHOPWARE": "NET1",
+        "AERA": "NET2",
+        "WAWIBOX": "NET3",
+        "DENTALHELD": "NET4",
+    }
+
+
+def remove_null_keys(obj):
+    if isinstance(obj, dict):
+        return {k: remove_null_keys(v) for k, v in obj.items() if v is not None}
+    elif isinstance(obj, list):
+        return [remove_null_keys(v) for v in obj if v is not None]
+    else:
+        return obj
+
+
+def remove_empty_strings(obj):
+    if isinstance(obj, dict):
+        return {k: remove_empty_strings(v) for k, v in obj.items() if v != ""}
+    elif isinstance(obj, list):
+        return [remove_empty_strings(v) for v in obj if v != ""]
+    return obj
+
+
+def make_json_safe(obj):
+    if isinstance(obj, dict):
+        return {k: make_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [make_json_safe(v) for v in obj]
+    if isinstance(obj, Decimal):
+        return float(obj.quantize(Decimal("0.00")))
+    return obj
+
+
+def clean_payload(payload, json_safe=True):
+    payload = remove_null_keys(payload)
+    payload = remove_empty_strings(payload)
+    if json_safe:
+        payload = make_json_safe(payload)
+    return payload
+
+
+class OrderBaseModel(Model):
+    order_number = CharField(max_length=100, null=True, blank=True)
+    fetched_at = DateTimeField(null=True, blank=True, auto_now=True)
+    weclapp_id = CharField(max_length=100, null=True, blank=True)
+    synced_to_weclapp = BooleanField(default=False, db_index=True)
+
+    class Meta:
+        abstract = True
+
+    @property
+    def customer_email(self):
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement customer_email"
+        )
+
+    def build_weclapp_order_payload(self):
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement build_weclapp_order_payload function"
+        )
+
+    def build_weclapp_customer_payload(self):
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement build_weclapp_customer_payload function"
+        )
+
+
+def normalize_text(value):
+    return value.lower().strip() if value else None

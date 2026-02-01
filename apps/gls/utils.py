@@ -1,6 +1,7 @@
 from apps.core.models import LogEntry
 import os
 import re
+from unidecode import unidecode
 from apps.gls.mapping import field_map_101
 from apps.gls.mapping import field_map_102
 from django.conf import settings
@@ -310,3 +311,12 @@ def upload_product_group_to_db(rows, batch_size=500):
         "updated": updated_count,
         "total": created_count + updated_count,
     }
+
+
+def clean_gls_address(value):
+    GLS_ALLOWED = re.compile(r"[^A-Za-z0-9 \-./]")
+
+    if not value:
+        return None
+    value = unidecode(value)  # ä → ae, ß → ss, é → e
+    return GLS_ALLOWED.sub("", value).strip()

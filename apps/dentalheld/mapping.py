@@ -1,0 +1,46 @@
+from django.conf import settings
+
+
+field_map_update_csv = [
+    ("sku", "artikel_id"),
+    ("ean", "artikel_ean"),
+    ("name", "artikel_name"),
+    ("net_price", "artikel_netto"),
+    ("manufacturer_id", "hersteller_id"),
+    ("manufacturer_name", "hersteller_name"),
+    ("manufacturer_article_number", "hersteller_artikelnummer"),
+    ("delivery_status", "lieferstatus"),
+    ("delivery_time_days", "lieferzeit_in_tagen"),
+    ("stock_level", "lagerbestand"),
+    ("temperature_shipping_cost", "temperaturstabile_versandkosten"),
+    ("extra_cost_max", "zusatzkosten_maximum"),
+    ("extra_cost_additive", "zusatzkosten_additiv"),
+    ("tier_qty_1", "staffelpreis_menge_1"),
+    ("tier_price_1", "staffelpreis_1"),
+    ("tier_qty_2", "staffelpreis_menge_2"),
+    ("tier_price_2", "staffelpreis_2"),
+    ("tier_qty_3", "staffelpreis_menge_3"),
+    ("tier_price_3", "staffelpreis_3"),
+    ("tier_qty_4", "staffelpreis_menge_4"),
+    ("tier_price_4", "staffelpreis_4"),
+    ("tier_qty_5", "staffelpreis_menge_5"),
+    ("tier_price_5", "staffelpreis_5"),
+    ("returnable", "kein_umtausch"),
+    ("student_net_price", "student_artikel_netto"),
+    ("student_tier_qty_1", "student_staffelpreis_menge_1"),
+    ("student_tier_price_1", "student_staffelpreis_1"),
+    ("student_tier_qty_2", "student_staffelpreis_menge_2"),
+    ("student_tier_price_2", "student_staffelpreis_2"),
+    ("student_tier_qty_3", "student_staffelpreis_menge_3"),
+    ("student_tier_price_3", "student_staffelpreis_3"),
+    ("student_tier_qty_4", "student_staffelpreis_menge_4"),
+    ("student_tier_price_4", "student_staffelpreis_4"),
+    ("student_tier_qty_5", "student_staffelpreis_menge_5"),
+    ("student_tier_price_5", "student_staffelpreis_5"),
+    ("search_keywords", "suchbegriffe_artikel"),
+    ("comparable_product_urls", "vergleichbare_artikel_url"),
+]
+
+DATA_FIELD_MAPS = {
+    settings.DENTALHELD_FILE_UPDATE_CSV: field_map_update_csv,
+}

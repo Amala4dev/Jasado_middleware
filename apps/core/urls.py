@@ -44,7 +44,7 @@ urlpatterns = [
         name="run_automations",
     ),
     path(
-        "core/",
+        "",
         views.core,
         name="core",
     ),

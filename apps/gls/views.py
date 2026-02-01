@@ -6,6 +6,7 @@ from django.views.decorators.http import require_POST
 from django.conf import settings
 from django.urls import reverse
 from django.utils.timezone import now
+import traceback
 from utils import (
     ftp_connection,
     parse_ftp_file_to_model,
@@ -21,7 +22,7 @@ from .utils import (
     FILE_PRODUCT_GROUP,
 )
 from django.http import JsonResponse, HttpResponse
-from apps.core.models import TaskStatus, ExportTask
+from apps.core.models import ExportTask
 from .mapping import DATA_FIELD_MAPS
 from .models import (
     GLSOrderConfirmation,
@@ -61,11 +62,9 @@ def download_gls_files():
                 os.utime(local_path, (f.st_mtime, f.st_mtime))
                 GlsLog.info(f"Downloaded file {filename} successfully")
 
-        TaskStatus.set_success(TaskStatus.DOWNLOAD_FILES_GLS)
         is_completed = True
-    except Exception as e:
-        TaskStatus.set_failure(TaskStatus.DOWNLOAD_FILES_GLS)
-        GlsLog.error(f"Failed to download files from GLS:  {e}")
+    except Exception:
+        GlsLog.error(f"Failed to download files from GLS:  {traceback.format_exc()}")
 
     return is_completed
 
@@ -103,15 +102,15 @@ def upload_gls_orders(order_header):
                     )
                     order_header.header_renamed = True
                     order_header.save()
-            except Exception as e:
+            except Exception:
                 all_ok = False
                 GlsLog.error(
-                    f"Failed to rename order header file from {header_csv_temp_name} to {header_csv_perm_name}:  {e}"
+                    f"Failed to rename order header file from {header_csv_temp_name} to {header_csv_perm_name}:  {traceback.format_exc()}"
                 )
-        except Exception as e:
+        except Exception:
             all_ok = False
             GlsLog.error(
-                f"Failed to upload order header file {header_csv_temp_name}:  {e}"
+                f"Failed to upload order header file {header_csv_temp_name}:  {traceback.format_exc()}"
             )
 
         try:
@@ -130,15 +129,15 @@ def upload_gls_orders(order_header):
                     )
                     order_header.lines_renamed = True
                     order_header.save()
-            except Exception as e:
+            except Exception:
                 all_ok = False
                 GlsLog.error(
-                    f"Failed to rename order line file from {lines_csv_temp_name} to {lines_csv_perm_name}:  {e}"
+                    f"Failed to rename order line file from {lines_csv_temp_name} to {lines_csv_perm_name}:  {traceback.format_exc()}"
                 )
-        except Exception as e:
+        except Exception:
             all_ok = False
             GlsLog.error(
-                f"Failed to upload order line file {lines_csv_temp_name} :  {e}"
+                f"Failed to upload order line file {lines_csv_temp_name} :  {traceback.format_exc()}"
             )
 
     return all_ok
@@ -169,9 +168,9 @@ def parse_gls_file_data():
             try:
                 file_path = os.path.join(GLS_DOWNLOAD_PATH, filename)
                 ext = os.path.splitext(filename)[1]
-                if ext in [".316", ".315"]:
+                if ext in [".316", ".315", ".317", ".320", ".501"]:
                     parse_ftp_file_to_model(
-                        file_path, DATA_FIELD_MAPS[ext], replace_all=True
+                        file_path, DATA_FIELD_MAPS[ext], use_hash=True
                     )
                 else:
                     parse_ftp_file_to_model(
@@ -180,34 +179,24 @@ def parse_gls_file_data():
                     )
 
                 GlsLog.info(f"File {filename} updated on db successfully")
-            except Exception as e:
+            except Exception:
                 all_ok = False
-                GlsLog.error(f"Failed to update db from file {filename}: {e}")
+                GlsLog.error(
+                    f"Failed to update db from file {filename}: {traceback.format_exc()}"
+                )
 
         if all_ok:
             move_all_files(GLS_DOWNLOAD_PATH, PENDING_DELETION_PATH)
-            TaskStatus.set_success(TaskStatus.PARSE_DOWNLOADED_FILES_GLS)
-        else:
-            TaskStatus.set_failure(TaskStatus.PARSE_DOWNLOADED_FILES_GLS)
-
     return all_ok
 
 
 def push_dropshipping_orders_to_gls():
-    all_ok = True
     new_order_headers = GLSOrderHeader.objects.filter(is_processed=False)
     for order_header in new_order_headers:
         is_uploaded = upload_gls_orders(order_header)
         if is_uploaded:
             new_order_headers.is_processed = True
             new_order_headers.save()
-        else:
-            all_ok = False
-
-    if all_ok:
-        TaskStatus.set_success(TaskStatus.UPLOAD_ORDERS_GLS)
-    else:
-        TaskStatus.set_failure(TaskStatus.UPLOAD_ORDERS_GLS)
 
 
 def fetch_gls_order_feedback():
@@ -259,6 +248,11 @@ def handle_item_qty(feedback):
     internal_user = feedback.internal_user
     document_number = feedback.document_number
 
+    if article_no:
+        article_no = article_no.strip()
+        if not article_no.upper().startswith("LG"):
+            article_no = f"LG{article_no}"
+
     if order_number and position:
         order_status, _ = GLSOrderStatus.objects.get_or_create(
             order_number=order_number, position=position
@@ -272,34 +266,32 @@ def handle_item_qty(feedback):
         )
 
     try:
-        if True:
-            # if not order_status.delivered:
-            is_delivery_complete = int(ordered_qty) == int(delivered_qty)
+        is_delivery_complete = int(ordered_qty) == int(delivered_qty)
 
-            order_status.delivered = is_delivery_complete
-            order_status.delivered_qty = delivered_qty
-            order_status.ordered_qty = ordered_qty
-            order_status.package_type = package_type
-            order_status.delivery_date = delivery_date
-            order_status.article_no = article_no
-            order_status.status_info = status_info
-            order_status.control_number = control_number
+        order_status.delivered = is_delivery_complete
+        order_status.delivered_qty = delivered_qty
+        order_status.ordered_qty = ordered_qty
+        order_status.package_type = package_type
+        order_status.delivery_date = delivery_date
+        order_status.article_no = article_no
+        order_status.status_info = status_info
+        order_status.control_number = control_number
 
-            order_status.end_customer_id = end_customer_id
-            order_status.customer_number = customer_number
-            order_status.unit_price = unit_price
-            order_status.internal_user = internal_user
-            order_status.document_number = document_number
+        order_status.end_customer_id = end_customer_id
+        order_status.customer_number = customer_number
+        order_status.unit_price = unit_price
+        order_status.internal_user = internal_user
+        order_status.document_number = document_number
 
-            if not is_delivery_complete:
-                order_status.expected_delivery_date = expected_delivery_date
-                order_status.planned_goods_receipt_date = planned_goods_receipt_date
-            order_status.save()
+        if not is_delivery_complete:
+            order_status.expected_delivery_date = expected_delivery_date
+            order_status.planned_goods_receipt_date = planned_goods_receipt_date
+        order_status.save()
         is_processed = True
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 1 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 1 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -327,10 +319,10 @@ def handle_serial_number(feedback):
         order_status.document_number = document_number
         order_status.save()
         is_processed = True
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 2 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 2 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -362,10 +354,10 @@ def handle_batch_number(feedback):
         order_status.shipping_service = shipping_service or shipping_info
         order_status.save()
         is_processed = True
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 3 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 3 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -396,7 +388,7 @@ def handle_expiry_date(feedback):
     except Exception as e:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 4 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 4 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -424,10 +416,10 @@ def handle_siemens_no(feedback):
         order_status.document_number = document_number
         order_status.save()
         is_processed = True
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 5 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 5 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -466,10 +458,10 @@ def handle_package_info(feedback):
         order_status.shipping_service = shipping_service or shipping_info
         order_status.save()
         is_processed = True
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 6 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 6 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -487,6 +479,11 @@ def handle_planned_delivery(feedback):
     unit_price = feedback.unit_price
     internal_user = feedback.internal_user
     article_no = feedback.article_no
+
+    if article_no:
+        article_no = article_no.strip()
+        if not article_no.upper().startswith("LG"):
+            article_no = f"LG{article_no}"
 
     try:
         if order_number and position:
@@ -515,10 +512,10 @@ def handle_planned_delivery(feedback):
 
         is_processed = True
 
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 7 order feedback for order {order_number}, position {position}: {e}"
+            f"Failed to handle record type 7 order feedback for order {order_number}, position {position}: {traceback.format_exc()}"
         )
 
     return is_processed
@@ -546,10 +543,10 @@ def handle_backorder_info(feedback):
             is_processed = True
         else:
             is_processed = False
-    except Exception as e:
+    except Exception:
         is_processed = False
         GlsLog.error(
-            f"Failed to handle record type 8 order feedback for order {order_number}: {e}"
+            f"Failed to handle record type 8 order feedback for order {order_number}: {traceback.format_exc()}"
         )
     return is_processed
 
@@ -562,7 +559,11 @@ def notify_cancelled_orders():
         context = {
             "orders": cancelled_orders,
         }
-        response = send_email(subject, template, context)
+        response = send_email(
+            subject=subject,
+            context=context,
+            email_template=template,
+        )
 
         if response["sent"]:
             cancelled_orders.update(admin_notified=True)
@@ -586,7 +587,7 @@ def export_master_data(request):
         "file_type": file_type,
         "model_label": "gls.GLSMasterData",
         "display_name": "GLS Master Data",
-        "exclude_fields": ["id", "manufacturer", "pk", "updated_at"],
+        "exclude_fields": ["id", "manufacturer", "pk", "updated_at", "row_hash"],
     }
 
     ExportTask.objects.create(
@@ -630,10 +631,48 @@ def upload_product_group(request):
     return redirect(changelist_url)
 
 
+def debug_gls_record(delimiter="^#!"):
+    """
+    record_line: raw line from GLS file (string)
+    field_map: e.g. field_map_101
+    """
+    from apps.gls.mapping import field_map_101
+    from apps.gls.mapping import field_map_102
+
+    record_line = (
+        "K^#!2535^#!144240^#!11258^#!11258^#!"
+        "Kieferorthop„die mit Herz Herr Dennis Hickey^#!^#!^#!^#!"
+        "Postplatz 2^#!71032^#!B”blingen^#!DE^#!"
+        "Kieferorthop„die mit Herz Herr Dennis Hickey^#!^#!^#!^#!"
+        "Postplatz 2^#!71032^#!B”blingen^#!DE^#!"
+        "07^#!LS^#!1^#!^#!^#!20^#!^#!3^#!1^#!^#!^#!"
+        "info@kfo-mit-herz.de^#!^#!^#!EUR^#!N^#!^#!^#!"
+    )
+    # record_line = "Z^#!10038^#!1^#!238632^#!LG238632^#!^#!Abdecktuch steril 150x200cm h-blau 25St^#!^#!1"
+
+    fields = field_map_101["fields"]
+    # fields = field_map_102["fields"]
+
+    values = record_line.rstrip("\n").split(delimiter)
+
+    result = {}
+    for i, field in enumerate(fields):
+        field_name = field[0] if isinstance(field, tuple) else field
+        result[field_name] = values[i] if i < len(values) and values[i] != "" else None
+
+    return result
+
+
 def index(request):
+    from django.utils import timezone
+
+    print("started", timezone.now())
+
     # data = download_gls_files()
-    data = parse_gls_file_data()
+    # data = parse_gls_file_data()
+    data = debug_gls_record()
     # data = notify_cancelled_orders()
     # data = notify_cancelled_orders()
     # return HttpResponse(data)
+    print("finished", timezone.now())
     return JsonResponse(data, safe=False)

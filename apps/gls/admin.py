@@ -7,13 +7,11 @@ class GLSMasterDataAdmin(admin.ModelAdmin):
     list_display = (
         "article_no",
         "description",
-        "manufacturer_name",
         "article_group_no",
         "article_group_name",
         "product_group_no",
         "product_group_name",
         "blocked",
-        "freely_available",
     )
     list_display_links = ("article_no", "description")
     search_fields = ("article_no", "description", "manufacturer_article_no")
@@ -219,6 +217,7 @@ class GLSPromotionPositionAdmin(admin.ModelAdmin):
         "action_code",
         "article_no",
         "position_number",
+        "qty_editable",
         "set_qty",
         "last_fetch_from_gls",
     )
@@ -241,6 +240,7 @@ class GLSPromotionPriceAdmin(admin.ModelAdmin):
         "article_name",
         "action_code",
         "short_text",
+        "promotion_price",
         "promotional_purchase_price",
         "valid_from",
         "valid_to",
@@ -330,6 +330,7 @@ class GLSSupplierAdmin(admin.ModelAdmin):
             {
                 "fields": (
                     "supplier_no",
+                    "weclapp_id",
                     "name1",
                     "name2",
                     "search_term",
@@ -481,50 +482,53 @@ class GLSBackorderAdmin(admin.ModelAdmin):
         return False
 
 
-# class GLSOrderLineInline(admin.TabularInline):
-#     model = GLSOrderLine
-#     extra = 0
-#     can_delete = False
-#     show_change_link = True
-#     readonly_fields = [f.name for f in GLSOrderLine._meta.fields]
+class GLSOrderLineInline(admin.TabularInline):
+    model = GLSOrderLine
+    extra = 0
+    fields = (
+        "order_number",
+        "position",
+        "gls_article_no",
+        "customer_article_no",
+        "qty",
+    )
 
 
-# @admin.register(GLSOrderHeader)
-# class GLSOrderHeaderAdmin(admin.ModelAdmin):
-#     list_display = (
-#         "order_number",
-#         "branch_no",
-#         "customer_id",
-#         "delivery_date",
-#         "is_processed",
-#     )
-#     search_fields = ("order_number", "customer_id")
-#     list_filter = ("is_processed",)
-#     inlines = [GLSOrderLineInline]
+@admin.register(GLSOrderHeader)
+class GLSOrderHeaderAdmin(admin.ModelAdmin):
+    list_display = (
+        "order_number",
+        "customer_id",
+        "billing_name",
+        "email_address",
+        "is_processed",
+    )
+    search_fields = ("order_number", "customer_id")
+    inlines = [GLSOrderLineInline]
 
-#     def has_add_permission(self, r, o=None):
-#         return False
+    def has_add_permission(self, r, o=None):
+        return False
 
-#     def has_change_permission(self, r, o=None):
-#         return False
+    def has_change_permission(self, r, o=None):
+        return False
 
-#     def has_delete_permission(self, r, o=None):
-#         return False
+    def has_delete_permission(self, r, o=None):
+        return False
 
 
-# @admin.register(GLSOrderLine)
-# class GLSOrderLineAdmin(admin.ModelAdmin):
-#     list_display = ("order_number", "gls_article_no", "qty", "unit_price", "free_item")
-#     search_fields = ("order_number", "gls_article_no")
+@admin.register(GLSOrderLine)
+class GLSOrderLineAdmin(admin.ModelAdmin):
+    list_display = ("order_number", "gls_article_no", "qty", "unit_price", "free_item")
+    search_fields = ("order_number", "gls_article_no")
 
-#     def has_add_permission(self, r, o=None):
-#         return False
+    def has_add_permission(self, r, o=None):
+        return False
 
-#     def has_change_permission(self, r, o=None):
-#         return False
+    def has_change_permission(self, r, o=None):
+        return False
 
-#     def has_delete_permission(self, r, o=None):
-#         return False
+    def has_delete_permission(self, r, o=None):
+        return False
 
 
 @admin.register(GLSOrderStatus)
@@ -534,6 +538,7 @@ class GLSOrderStatusAdmin(admin.ModelAdmin):
         "position",
         "delivered",
         "ordered_qty",
+        "control_number",
         "document_number",
         "delivered_qty",
         "status_info",
@@ -563,7 +568,6 @@ class GLSOrderStatusAdmin(admin.ModelAdmin):
                     "ordered_qty",
                     "delivered_qty",
                     "planned_qty",
-                    "last_sent_qty",
                 )
             },
         ),
@@ -667,8 +671,10 @@ class GLSProductGroupAdmin(admin.ModelAdmin):
     list_display = (
         "product_group_no",
         "product_group_name",
+        "weclapp_id",
     )
     search_fields = ("product_group_no", "product_group_name")
+    readonly_fields = ("weclapp_id", "last_updated")
 
     def has_add_permission(self, r, o=None):
         return False

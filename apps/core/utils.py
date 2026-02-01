@@ -112,6 +112,8 @@ def row_to_item(fields, file_type):
 
         sku = clean_text(fields.get("sku"))
         gtin = clean_text(fields.get("gtin"))
+        if gtin and not gtin.isdigit():
+            raise ValueError(f"Invalid data {gtin}, GTIN can only be numbers.")
 
         return {
             "article_no": article_no,
@@ -227,7 +229,7 @@ def validate_file_and_extract_rows(uploaded_file, file_type):
 
 
 def upload_additional_products_to_db(rows, batch_size=500):
-    unique_fields = ("manufacturer", "manufacturer_article_no", "name")
+    unique_fields = ("manufacturer_article_no", "name")
 
     # Extract keys as tuples
     keys = [
@@ -408,18 +410,18 @@ def upload_blocked_products_to_db(rows, batch_size=500):
 
 
 def upload_product_gtin_to_db(rows, batch_size=500):
-    unique_field = "sku"
+    unique_field = "article_no"
 
-    skus = [row.get(unique_field) for row in rows if row.get(unique_field)]
-    skus = list(set(skus))
+    article_nos = [row.get(unique_field) for row in rows if row.get(unique_field)]
+    article_nos = list(set(article_nos))
 
     existing_map = {}
 
-    for i in range(0, len(skus), batch_size):
-        chunk = skus[i : i + batch_size]
-        qs = ProductGtin.objects.filter(sku__in=chunk)
+    for i in range(0, len(article_nos), batch_size):
+        chunk = article_nos[i : i + batch_size]
+        qs = ProductGtin.objects.filter(article_no__in=chunk)
         for obj in qs:
-            existing_map[obj.sku] = obj
+            existing_map[obj.article_no] = obj
 
     created_count = 0
     updated_count = 0
@@ -428,16 +430,16 @@ def upload_product_gtin_to_db(rows, batch_size=500):
     to_update = []
 
     for row in rows:
-        sku = row.get("sku")
-        if not sku:
+        article_no = row.get("article_no")
+        if not article_no:
             continue
 
-        article_no = row.get("article_no")
         gtin = row.get("gtin")
+        sku = row.get("sku")
 
-        if sku in existing_map:
-            obj = existing_map[sku]
-            obj.article_no = article_no
+        if article_no in existing_map:
+            obj = existing_map[article_no]
+            obj.sku = sku
             obj.gtin = gtin
             to_update.append(obj)
             updated_count += 1
@@ -456,7 +458,7 @@ def upload_product_gtin_to_db(rows, batch_size=500):
 
         with transaction.atomic():
             if batch_update:
-                ProductGtin.objects.bulk_update(batch_update, ["article_no", "gtin"])
+                ProductGtin.objects.bulk_update(batch_update, ["sku", "gtin"])
 
     for i in range(0, len(to_create), batch_size):
         batch_create = to_create[i : i + batch_size]

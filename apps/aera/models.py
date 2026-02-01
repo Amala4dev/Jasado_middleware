@@ -7,9 +7,21 @@ from django.db.models import IntegerField
 from django.db.models import TextField
 from django.db.models import DateTimeField
 from django.db.models import DecimalField
+from django.db.models import DateField
 from django.db.models import SET_NULL
 from django.db.models import CASCADE
 from apps.core.models import Product
+from apps.weclapp.client import fetch_article_by_sku
+from utils import (
+    to_unix_ms,
+    weclapp_sales_channel,
+    truncate_max_length,
+    clean_payload,
+    OrderBaseModel,
+)
+from django.conf import settings
+
+WECLAPP_SHIPPING_ARTICLE_MAP = settings.WECLAPP_SHIPPING_ARTICLE_MAP
 
 OFFER_TYPE_ID_MAP = {
     1: "Default",
@@ -42,78 +54,7 @@ class AeraProduct(Model):
         related_name="aera_product",
     )
     sku = CharField(max_length=50, unique=True)
-    aera_product_id = IntegerField(null=True, blank=True)
-    manufacturer = CharField(max_length=255, blank=True, null=True)
-    mpn = CharField(max_length=100, blank=True, null=True)
-
-    offer_type_id = IntegerField(editable=False, null=True, blank=True)
-    discontinuation = BooleanField(default=False)
-    discontinuation_date = DateTimeField(null=True, blank=True)
-
-    availability_type_id = IntegerField(
-        null=True, blank=True, help_text="1=In stock, 2=Procurement Article"
-    )
-    different_delivery_time = IntegerField(
-        verbose_name="Delivery time", null=True, blank=True
-    )
-
-    discountable = BooleanField(default=False)
-    refundable = BooleanField(default=False)
-
-    lower_bound_1 = IntegerField(null=True, blank=True)
-    net_price_1 = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
-    lower_bound_2 = IntegerField(null=True, blank=True)
-    net_price_2 = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
-    lower_bound_3 = IntegerField(null=True, blank=True)
-    net_price_3 = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
-    lower_bound_4 = IntegerField(null=True, blank=True)
-    net_price_4 = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
-    lower_bound_5 = IntegerField(null=True, blank=True)
-    net_price_5 = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-
-    special_offer_valid_through = DateTimeField(null=True, blank=True)
-    special_offer_discountable = BooleanField(default=False)
-
-    special_offer_lower_bound_1 = IntegerField(null=True, blank=True)
-    special_offer_net_price_1 = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-
-    special_offer_lower_bound_2 = IntegerField(null=True, blank=True)
-    special_offer_net_price_2 = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-
-    special_offer_lower_bound_3 = IntegerField(null=True, blank=True)
-    special_offer_net_price_3 = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-
-    special_offer_lower_bound_4 = IntegerField(null=True, blank=True)
-    special_offer_net_price_4 = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-
-    special_offer_lower_bound_5 = IntegerField(null=True, blank=True)
-    special_offer_net_price_5 = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-
-    shipped_temperature_stable = BooleanField(default=False)
-
-    last_fetch_from_aera = DateTimeField(
-        verbose_name="Last Fetched from AERA",
-        help_text="Timestamp of the last data fetch from AERA",
-        auto_now=True,
-    )
-
-    @property
-    def offer_type_name(self):
-        return OFFER_TYPE_ID_MAP.get(self.offer_type_id, "Unknown")
+    aera_id = IntegerField(null=True, blank=True)
 
     class Meta:
         verbose_name = "Aera Product"
@@ -195,11 +136,20 @@ class AeraExport(Model):
     )
     shipped_temperature_stable = BooleanField(default=True)
     weight = DecimalField(
-        max_digits=12, decimal_places=4, null=True, blank=True, editable=False
+        max_digits=12, decimal_places=2, null=True, blank=True, editable=False
     )
-    sales_price = DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    sales_price = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    gift_sales_price = DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    gift_min_qty = IntegerField(
+        null=True, blank=True, help_text="Minimum quantity for gift price"
+    )
+    gift_valid_until = DateField(blank=True, null=True)
     updated_at = DateTimeField(auto_now=True)
-    last_pushed_to_aera = DateTimeField(null=True, blank=True)
+    last_pushed_to_aera = DateTimeField(
+        verbose_name="Date pushed to aera", null=True, blank=True
+    )
 
     @property
     def offer_type_name(self):
@@ -209,15 +159,11 @@ class AeraExport(Model):
         return f"{self.sku} - {self.product_name or ''}"
 
 
-class AeraOrder(Model):
+class AeraOrder(OrderBaseModel):
     order_token = CharField(max_length=100, unique=True)
-    order_number = CharField(max_length=100, null=True, blank=True)
     buyer_name = CharField(max_length=255, null=True, blank=True)
-    seller_name = CharField(max_length=255, null=True, blank=True)
-    date_transfer_confirmed = DateTimeField(null=True, blank=True)
     date_transfer_released = DateTimeField(null=True, blank=True)
-    fetched_at = DateTimeField(null=True, blank=True)
-    synced_to_weclapp = BooleanField(default=False, db_index=True)
+    note = CharField(max_length=255, null=True, blank=True)
 
     # Billing address
     billing_name1 = CharField(max_length=255, null=True, blank=True)
@@ -244,17 +190,10 @@ class AeraOrder(Model):
     delivery_vat_number = CharField(max_length=100, null=True, blank=True)
 
     # Totals and other details
+    company_vat_number = CharField(max_length=100, null=True, blank=True)
     currency = CharField(max_length=10, null=True, blank=True)
     gross_amount = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     net_amount = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    vat_amount_full = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-    vat_amount_half = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-    vat_rate_full = DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
-    vat_rate_half = DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     postage = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     payment_method_id = IntegerField(null=True, blank=True)
     order_type_id = IntegerField(null=True, blank=True)
@@ -262,20 +201,156 @@ class AeraOrder(Model):
     def __str__(self):
         return f"{self.order_number or self.order_token}"
 
+    class Meta:
+        ordering = ["-date_transfer_released"]
+
+    @property
+    def customer_email(self):
+        return self.billing_email
+
+    def build_weclapp_order_payload(self, customer_id):
+        items = list(self.items.all())
+
+        skus = {item.sku for item in items}
+
+        product_map = {p.sku: p for p in Product.objects.filter(sku__in=skus)}
+
+        payload = {
+            "customerId": customer_id,
+            "orderNumberAtCustomer": self.order_number,
+            "orderDate": (
+                to_unix_ms(self.date_transfer_released)
+                if self.date_transfer_released
+                else None
+            ),
+            "note": truncate_max_length(self.note, 512),
+            "salesChannel": weclapp_sales_channel().get("AERA"),
+            "invoiceAddress": {
+                "company": self.billing_name1,
+                "company2": self.billing_name2,
+                "street1": self.billing_line1,
+                "street2": self.billing_line2,
+                "city": self.billing_city,
+                "zipcode": self.billing_postcode,
+                "countryCode": self.billing_country_code,
+                "phoneNumber": self.billing_phone,
+            },
+            "deliveryAddress": {
+                "company": self.delivery_name1,
+                "company2": self.delivery_name2,
+                "street1": self.delivery_line1,
+                "street2": self.delivery_line2,
+                "city": self.delivery_city,
+                "zipcode": self.delivery_postcode,
+                "countryCode": self.delivery_country_code,
+                "phoneNumber": self.delivery_phone,
+            },
+            "deliveryEmailAddresses": {
+                "toAddresses": self.delivery_email,
+            },
+            "orderItems": [],
+            "shippingCostItems": [
+                {
+                    "articleId": fetch_article_by_sku(
+                        WECLAPP_SHIPPING_ARTICLE_MAP[self.delivery_country_code]
+                    )["id"],
+                    "manualUnitPrice": True,
+                    "unitPrice": self.postage,
+                }
+            ],
+        }
+
+        order_items = [
+            {
+                "articleId": product_map[item.sku].weclapp_id,
+                "positionNumber": item.index_id,
+                "quantity": item.order_quantity,
+                "unitPrice": item.unit_price,
+                "manualUnitPrice": True,
+                "discountPercentage": item.discount_rate,
+                "note": truncate_max_length(item.remark, 1000),
+            }
+            for item in items
+        ]
+
+        next_pos = max(i["positionNumber"] for i in order_items)
+
+        # ADD PROMOTION FREE LINE
+        for item in items:
+            product = product_map[item.sku]
+            order_qty = item.order_quantity
+            if product.has_gift_price and (order_qty >= product.gift_min_qty):
+                blocks = order_qty // product.gift_min_qty
+                free_qty = blocks * product.gift_free_qty
+
+                next_pos += 1
+                order_items.append(
+                    {
+                        "articleId": product_map[item.sku].weclapp_id,
+                        "positionNumber": next_pos,
+                        "quantity": free_qty,
+                        "unitPrice": -item.unit_price,
+                        "manualUnitPrice": True,
+                        "manualUnitCost": True,
+                        "unitCost": 0,
+                    }
+                )
+
+        payload["orderItems"] = order_items
+
+        payload = clean_payload(payload)
+        return payload
+
+    def build_weclapp_customer_payload(self):
+        payload = {
+            "partyType": "ORGANIZATION",
+            "customer": True,
+            "company": self.buyer_name,
+            "email": self.billing_email,
+            "phone": self.billing_phone,
+            "vatIdentificationNumber": self.company_vat_number
+            or self.billing_vat_number
+            or self.delivery_vat_number,
+            "addresses": [
+                {
+                    "primaryAddress": True,
+                    "invoiceAddress": True,
+                    "deliveryAddress": False,
+                    "company": self.billing_name1,
+                    "street1": self.billing_line1,
+                    "street2": self.billing_line2,
+                    "city": self.billing_city,
+                    "zipcode": self.billing_postcode,
+                    "countryCode": self.billing_country_code,
+                    "phoneNumber": self.billing_phone,
+                },
+                {
+                    "primaryAddress": False,
+                    "invoiceAddress": False,
+                    "deliveryAddress": True,
+                    "company": self.delivery_name1,
+                    "street1": self.delivery_line1,
+                    "street2": self.delivery_line2,
+                    "city": self.delivery_city,
+                    "zipcode": self.delivery_postcode,
+                    "countryCode": self.delivery_country_code,
+                    "phoneNumber": self.delivery_phone,
+                },
+            ],
+        }
+        payload = clean_payload(payload)
+        return payload
+
 
 class AeraOrderItem(Model):
     order = ForeignKey(AeraOrder, on_delete=CASCADE, related_name="items")
     sku = CharField(max_length=100, null=True, blank=True)
     product_name = CharField(max_length=255, null=True, blank=True)
     product_id = IntegerField(null=True, blank=True)
+    index_id = IntegerField(verbose_name="Position", null=True, blank=True)
     order_quantity = IntegerField(null=True, blank=True)
-    total_quantity = IntegerField(null=True, blank=True)
     unit_price = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     total_price = DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    total_value_of_goods = DecimalField(
-        max_digits=12, decimal_places=2, null=True, blank=True
-    )
-    unit_of_measure = CharField(max_length=50, null=True, blank=True)
     discount_rate = DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     discount_amount = DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True
@@ -284,4 +359,4 @@ class AeraOrderItem(Model):
     remark = TextField(null=True, blank=True)
 
     def __str__(self):
-        return f"{self.sku or ''} - {self.product_name or ''}"
+        return ""

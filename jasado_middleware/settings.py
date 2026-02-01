@@ -21,11 +21,13 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "apps.core",
-    "apps.gls",
     "apps.aera",
+    "apps.core",
+    "apps.dentalheld",
+    "apps.gls",
     "apps.wawibox",
     "apps.weclapp",
+    "apps.shopware",
 ]
 
 MIDDLEWARE = [
@@ -103,6 +105,8 @@ PENDING_DELETION_PATH = os.path.join(FTP_FILES_ROOT, "to_be_deleted")
 GLS_UPLOAD_PATH = os.path.join(FTP_FILES_ROOT, "gls", "uploads")
 WAWIBOX_DOWNLOAD_PATH = os.path.join(FTP_FILES_ROOT, "wawibox", "downloads")
 WAWIBOX_UPLOAD_PATH = os.path.join(FTP_FILES_ROOT, "wawibox", "uploads")
+DENTALHELD_DOWNLOAD_PATH = os.path.join(FTP_FILES_ROOT, "dentalheld", "downloads")
+DENTALHELD_UPLOAD_PATH = os.path.join(FTP_FILES_ROOT, "dentalheld", "uploads")
 
 
 # AERA API CONFIG
@@ -110,6 +114,26 @@ AERA_BASE_URL = os.getenv("AERA_BASE_URL")
 AERA_COMPANY_ID = os.getenv("AERA_COMPANY_ID")
 AERA_LOGIN_NAME = os.getenv("AERA_LOGIN_NAME")
 AERA_PASSWORD = os.getenv("AERA_PASSWORD")
+
+# SHOPWARE API CONFIG
+SHOPWARE_BASE_URL = os.getenv("SHOPWARE_BASE_URL")
+SHOPWARE_USERNAME = os.getenv("SHOPWARE_USERNAME")
+SHOPWARE_ACCESS_ID = os.getenv("SHOPWARE_ACCESS_ID")
+SHOPWARE_ACCESS_KEY = os.getenv("SHOPWARE_ACCESS_KEY")
+SHOPWARE_EUR_CURRENCY_ID = "b7d2554b0ce847cd82f3ac9bd1c0dfca"
+SHOPWARE_GIFT_RULE_ID = ""
+
+# DENTALHELD API CONFIG
+DENTALHELD_BASE_URL = os.getenv("DENTALHELD_BASE_URL")
+DENTALHELD_API_KEY = os.getenv("DENTALHELD_API_KEY")
+
+# DENTALHELD FTP CONFIG
+DENTALHELD_FTP_HOST = os.getenv("DENTALHELD_FTP_HOST")
+DENTALHELD_FTP_USER = os.getenv("DENTALHELD_FTP_USER")
+DENTALHELD_FTP_PASSWORD = os.getenv("DENTALHELD_FTP_PASSWORD")
+DENTALHELD_FTP_PORT = os.getenv("DENTALHELD_FTP_PORT")
+DENTALHELD_FILE_UPDATE_CSV = "update.csv"
+
 
 # GLS FTP CONFIG
 GLS_FTP_HOST = os.getenv("GLS_FTP_HOST")
@@ -161,3 +185,34 @@ WAWIBOX_DOWNLOAD_FILES_PATTERNS = [
 ]
 
 WAWIBOX_UPLOAD_FILES = [WAWIBOX_FILE_UPLOAD]
+
+
+# WECLAPP API CONFIG
+WECLAPP_BASE_URL = os.getenv("WECLAPP_BASE_URL")
+WECLAPP_API_TOKEN = os.getenv("WECLAPP_API_TOKEN")
+WECLAPP_SHIPPING_ARTICLE_MAP = {
+    "DE": "SHIP001",
+    "AT": "SHIP003",
+    "NL": "SHIP005",
+    "BE": "SHIP005",
+    "LU": "SHIP005",
+    "DK": "SHIP006",
+    "PL": "SHIP007",
+    "HU": "SHIP008",
+    "IT": "SHIP008",
+    "FR": "SHIP008",
+    "SK": "SHIP009",
+    "SE": "SHIP010",
+    "ES": "SHIP011",
+    "HR": "SHIP012",
+    "BG": "SHIP013",
+    "RO": "SHIP013",
+    "GR": "SHIP014",
+    "EE": "SHIP015",
+    "LT": "SHIP015",
+    "LV": "SHIP015",
+    "FI": "SHIP016",
+    "CH": "SHIP017",
+    "CZ": "SHIP018",
+    "SI": "SHIP019",
+}

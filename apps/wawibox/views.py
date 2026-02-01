@@ -1,27 +1,21 @@
 import os
 from django.conf import settings
+from django.utils import timezone
 
 from utils import (
     ftps_connection,
     parse_ftp_file_to_model,
-    send_email,
     validate_field_maps,
-    delete_all_files,
+    move_all_files,
 )
 from .utils import (
     WawiBoxLog,
     export_wawibox_product_data_to_csv,
     extract_date_from_wawibox_filename,
 )
-from django.http import JsonResponse, HttpResponse
-from apps.core.models import (
-    TaskStatus,
-    ExportTask,
-)
+from django.http import JsonResponse
 from .mapping import WAWIBOX_DATA_FIELD_MAPS
-from .models import (
-    WawiboxExport,
-)
+from .models import WawiboxExport
 
 # Constants
 WAWIBOX_FTP_HOST = settings.WAWIBOX_FTP_HOST
@@ -32,6 +26,7 @@ WAWIBOX_FTP_PATH_DOWNLOADS = settings.WAWIBOX_FTP_PATH_DOWNLOADS
 WAWIBOX_FTP_PATH_UPLOADS = settings.WAWIBOX_FTP_PATH_UPLOADS
 WAWIBOX_DOWNLOAD_PATH = settings.WAWIBOX_DOWNLOAD_PATH
 WAWIBOX_DOWNLOAD_FILES_PATTERNS = settings.WAWIBOX_DOWNLOAD_FILES_PATTERNS
+PENDING_DELETION_PATH = settings.PENDING_DELETION_PATH
 
 
 def download_wawibox_files():
@@ -77,10 +72,8 @@ def download_wawibox_files():
                     )
 
             is_completed = True
-            TaskStatus.set_success(TaskStatus.DOWNLOAD_FILES_WAWIBOX)
 
     except Exception as e:
-        TaskStatus.set_failure(TaskStatus.DOWNLOAD_FILES_WAWIBOX)
         WawiBoxLog.error(f"Failed to download latest Wawibox files: {e}")
 
     return is_completed
@@ -116,7 +109,6 @@ def parse_wawibox_file_data():
                         WAWIBOX_DATA_FIELD_MAPS[pattern],
                         delimiter=",",
                         encoding="utf-8",
-                        replace_all=True,
                         header_available=True,
                         use_csv=True,
                     )
@@ -137,15 +129,11 @@ def parse_wawibox_file_data():
                 WawiBoxLog.error(f"Failed to update db from file {filename}: {e}")
 
         if is_completed:
-            TaskStatus.set_success(TaskStatus.PARSE_DOWNLOADED_FILES_WAWIBOX)
-            delete_all_files(WAWIBOX_DOWNLOAD_PATH)
-        else:
-            TaskStatus.set_failure(TaskStatus.PARSE_DOWNLOADED_FILES_WAWIBOX)
-
+            move_all_files(WAWIBOX_DOWNLOAD_PATH, PENDING_DELETION_PATH)
     return is_completed
 
 
-def push_wawibox_data():
+def push_products_to_wawibox():
 
     csv_files_data = export_wawibox_product_data_to_csv()
 
@@ -158,8 +146,9 @@ def push_wawibox_data():
     ) as ftp:
         # ftp.change_dir(WAWIBOX_FTP_PATH_UPLOADS)
         try:
-            ftp.upload_file(csv_path, csv_name)
-            WawiBoxLog.info(f"Uploaded product export file {csv_name} successfully")
+            # ftp.upload_file(csv_path, csv_name)
+            # WawiBoxLog.info(f"Uploaded product export file {csv_name} successfully")
+            # WawiboxExport.objects.all().update(last_pushed_to_wawibox=timezone.now())
             is_completed = True
         except Exception as e:
             is_completed = False

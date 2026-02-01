@@ -12,14 +12,6 @@ from django.db.models import SET_NULL
 from django.db.models import CASCADE
 from apps.core.models import Product
 
-OFFER_TYPE_ID_MAP = {
-    1: "Default",
-    3: "New",
-    4: "Free",
-    5: "Opening offer",
-    7: "Discontinued item",
-}
-
 
 class WawiboxProduct(Model):
     """
@@ -32,7 +24,6 @@ class WawiboxProduct(Model):
         null=True,
         blank=True,
         related_name="wawibox_product",
-        editable=False,
     )
 
     sku = CharField(max_length=50, unique=True)
@@ -157,43 +148,38 @@ class WawiboxExport(Model):
         help_text="0 = Full, 1 = Reduced, 2 = None",
         blank=True,
         null=True,
-        editable=False,
     )
     max_order_quantity = IntegerField(null=True, blank=True, editable=False)
     image1_url = CharField(max_length=255, blank=True, null=True, editable=False)
     image2_url = CharField(max_length=255, blank=True, null=True, editable=False)
     image3_url = CharField(max_length=255, blank=True, null=True, editable=False)
     returnable = BooleanField(
-        default=False, help_text="0 = non-returnable, 1 = returnable", editable=False
+        default=False,
+        help_text="0 = non-returnable, 1 = returnable",
     )
     is_available = BooleanField(
         default=False,
         help_text="0 = currently out of stock, 1 = currently in stock.",
-        editable=False,
     )
-    delivery_time = IntegerField(null=True, blank=True, editable=False)
-    order_number = CharField(
-        max_length=100, blank=True, null=True, editable=False
-    )  # unique number to identify the price offer
-    valid_from = DateField(null=True, blank=True, editable=False)
-    valid_until = DateField(null=True, blank=True, editable=False)
-    min_order_quantity = IntegerField(null=True, blank=True, editable=False)
+    delivery_time = IntegerField(null=True, blank=True)
+    order_number = CharField(max_length=100, blank=True, null=True)
+    valid_from = DateField(null=True, blank=True)
+    valid_until = DateField(null=True, blank=True)
+    min_order_quantity = IntegerField(null=True, blank=True)
     sales_price = DecimalField(max_digits=14, decimal_places=4)
     discountable = BooleanField(
         default=False,
         help_text="0 = not eligible for discount, 1 = eligible for discount.",
-        editable=False,
     )
     # For tier pricing fill below fields
-    order_number_2 = CharField(max_length=100, blank=True, null=True, editable=False)
-    min_order_quantity_2 = IntegerField(null=True, blank=True, editable=False)
-    price_2 = DecimalField(
-        max_digits=14, decimal_places=4, blank=True, null=True, editable=False
-    )
+    order_number_2 = CharField(max_length=100, blank=True, null=True)
+    min_order_quantity_2 = IntegerField(null=True, blank=True)
+    price_2 = DecimalField(max_digits=14, decimal_places=4, blank=True, null=True)
+    valid_from = DateField(blank=True, null=True)
+    valid_until = DateField(blank=True, null=True)
     discountable_2 = BooleanField(
         default=False,
         help_text="0 = not eligible for discount, 1 = eligible for discount.",
-        editable=False,
     )
     updated_at = DateTimeField(auto_now=True)
     last_pushed_to_wawibox = DateTimeField(null=True, blank=True)

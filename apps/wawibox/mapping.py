@@ -1,7 +1,7 @@
 from django.conf import settings
 
 
-field_map_wawibox_file_upload = {
+old_field_map_wawibox_file_upload = {
     "fields": [
         ("manufacturer_article_no", "50c"),
         ("manufacturer_name", "255t"),
@@ -27,6 +27,37 @@ field_map_wawibox_file_upload = {
         ("min_order_quantity_2", "10d"),
         ("price_2", "14d,"),
         ("discountable_2", "1c_bool"),
+    ],
+    "model_label": "wawibox.WawiboxProductUpdate",
+}
+
+
+field_map_wawibox_file_upload = {
+    "fields": [
+        ("manufacturer_article_no", "str"),
+        ("manufacturer_name", "str"),
+        ("private_label", "bool_01"),
+        ("internal_number", "str"),
+        ("name", "str"),
+        ("description", "str"),
+        ("vat_category", "int_012"),
+        ("max_order_quantity", "int"),
+        ("image1_url", "str"),
+        ("image2_url", "str"),
+        ("image3_url", "str"),
+        ("returnable", "bool_01"),
+        ("is_available", "bool_01"),
+        ("delivery_time", "int"),
+        ("order_number", "str"),
+        ("valid_from", "date_iso"),
+        ("valid_until", "date_iso"),
+        ("min_order_quantity", "int"),
+        ("price", "decimal"),
+        ("discountable", "bool_01"),
+        ("order_number_2", "str"),
+        ("min_order_quantity_2", "int"),
+        ("price_2", "decimal"),
+        ("discountable_2", "bool_01"),
     ],
     "model_label": "wawibox.WawiboxProductUpdate",
 }
